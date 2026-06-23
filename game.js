@@ -52,7 +52,7 @@ const CONFIG = {
 
     MONSTER_RESPAWN: 5,
     MINIMAP_RANGE: 60,
-    AI_MAX: 30,
+    AI_MAX: 10,
 };
 
 const CREEPER_DMG = {1: 20, 2: 15, 3: 8, 4: 3, 5: 1};
