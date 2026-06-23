@@ -344,6 +344,7 @@ const NetworkManager = {
                     hp: 20, maxHp: 20, alive: true,
                     wanderAngle: Math.random() * Math.PI * 2,
                     wanderTimer: 0,
+                    lastAttack: 0,
                 });
                 currentAI++;
             }
@@ -529,22 +530,28 @@ const NetworkManager = {
             }
 
             if (atkRange > 0 && nearDist <= atkRange) {
-                let atkAngle = angle(m.x, m.y, nearSteve.x, nearSteve.y);
-                if (m.type === 'skeleton' && nearDist > 3) {
-                    this.eventsRef.push({
-                        type: 'projectile',
-                        x: m.x, y: m.y,
-                        dirX: Math.round(Math.cos(atkAngle) * 100) / 100,
-                        dirY: Math.round(Math.sin(atkAngle) * 100) / 100,
-                        damage: atkDmg, speed: CONFIG.ARROW_SPEED,
-                        owner: m.id, ownerTeam: 'monster', t: Date.now(),
-                    });
-                } else if (m.type !== 'skeleton') {
-                    this.eventsRef.push({
-                        type: 'damage', target: nearSteve.id,
-                        damage: atkDmg, angle: atkAngle,
-                        from: m.id, t: Date.now(),
-                    });
+                let now = Date.now();
+                if (!m.lastAttack) m.lastAttack = 0;
+                let atkCooldown = m.type === 'skeleton' ? 2000 : 500;
+                if (now - m.lastAttack >= atkCooldown) {
+                    m.lastAttack = now;
+                    let atkAngle = angle(m.x, m.y, nearSteve.x, nearSteve.y);
+                    if (m.type === 'skeleton') {
+                        this.eventsRef.push({
+                            type: 'projectile',
+                            x: m.x, y: m.y,
+                            dirX: Math.round(Math.cos(atkAngle) * 100) / 100,
+                            dirY: Math.round(Math.sin(atkAngle) * 100) / 100,
+                            damage: CONFIG.SKELETON_DAMAGE, speed: CONFIG.ARROW_SPEED,
+                            owner: m.id, ownerTeam: 'monster', t: Date.now(),
+                        });
+                    } else {
+                        this.eventsRef.push({
+                            type: 'damage', target: nearSteve.id,
+                            damage: atkDmg, angle: atkAngle,
+                            from: m.id, t: Date.now(),
+                        });
+                    }
                 }
             }
         }
