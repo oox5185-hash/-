@@ -1,35 +1,28 @@
-// ============ 游戏核心逻辑 ============
+// ============ 鼠鼠与鱼 - 游戏核心 ============
 
-// ===== 常量配置 =====
 const CONFIG = {
     MAP_SIZE: 500,
-    TILE_SIZE: 16,
     GAME_DURATION: 30 * 60,
     MAX_PLAYERS: 30,
     MAX_STEVE: 3,
 
-    // 速度（格/秒）
     STEVE_SPEED: 5,
-    ZOMBIE_SPEED: 6,
-    SKELETON_SPEED: 6,
-    CREEPER_SPEED: 6,
+    ZOMBIE_SPEED: 4,
+    SKELETON_SPEED: 4,
+    CREEPER_SPEED: 4,
     FISH_SPEED: 10,
     WATER_SLOW: 0.3,
 
-    // 史蒂夫
     STEVE_HP: 20,
     STEVE_LIVES: 3,
-    STEVE_ARMOR: 0.2,
+    STEVE_ARMOR: 0.5,  // 50%减伤
     STEVE_REGEN_INTERVAL: 10,
 
-    // 铁剑
     SWORD_DAMAGE: 6,
     SWORD_DURABILITY: 200,
     SWORD_RANGE: 3,
     SWORD_COOLDOWN: 0.6,
-    SLASH_ANGLE: Math.PI / 3,
 
-    // 弓箭
     BOW_DAMAGE_MIN: 2,
     BOW_DAMAGE_MAX: 8,
     BOW_RANGE: 30,
@@ -38,14 +31,10 @@ const CONFIG = {
     ARROW_SPEED: 20,
     MAX_ARROWS: 64,
 
-    // 药水
     POTION_HEAL: 4,
-
-    // 补给
     SUPPLY_COOLDOWN: 300,
     SUPPLY_RANGE: 3,
 
-    // 怪物
     ZOMBIE_HP: 20,
     ZOMBIE_DAMAGE: 4,
     ZOMBIE_RANGE: 3,
@@ -57,14 +46,11 @@ const CONFIG = {
     FISH_DAMAGE: 10,
     FISH_RANGE: 3,
 
-    // 击退
     KNOCKBACK_DIST: 1.5,
     KNOCKBACK_TIME: 0.2,
+    HIT_FLASH_TIME: 0.3,
 
-    // 复活
     MONSTER_RESPAWN: 5,
-
-    // 小地图
     MINIMAP_RANGE: 60,
 };
 
@@ -89,6 +75,8 @@ let gameState = {
     camera: {x: 0, y: 0},
     supplyTimer: 0,
     supplyReady: true,
+    // AI插值用
+    playerLerp: {},
 };
 
 // ===== 本地玩家 =====
@@ -107,11 +95,15 @@ let localPlayer = {
     bowChargeStart: 0,
     regenTimer: 0,
     inWater: false,
+    // 击退
     knockback: false,
     knockbackTimer: 0,
     knockbackDirX: 0,
     knockbackDirY: 0,
     knockbackSpeed: 0,
+    // 受击红闪
+    hitFlash: 0,
+    // 武器
     lastWeapon: 'sword',
     slashActive: false,
     slashTimer: 0,
@@ -120,53 +112,46 @@ let localPlayer = {
     facingAngle: 0,
 };
 
-// ===== 输入 =====
 let input = {
     keys: {},
     joystickDir: {x: 0, y: 0},
     joystickActive: false,
-    aimDir: {x: 0, y: 0},
-    aimActive: false,
+    aimDir: {x: 1, y: 0},
 };
 
-// ===== Canvas变量 =====
 let canvas, ctx, minimapCanvas, minimapCtx;
-let screenW, screenH;
-let viewTileSize;
+let screenW, screenH, viewTileSize;
 let waterFrame = 0, waterTimer = 0;
-let lastTime = 0;
-let syncTimer = 0;
+let lastTime = 0, syncTimer = 0;
 
-// ============ 地图生成（大河流）============
+// ============ 地图生成（大河流+沙滩）============
 
 function generateMap(seed) {
     const map = [];
     for (let y = 0; y < CONFIG.MAP_SIZE; y++) {
         map[y] = [];
         for (let x = 0; x < CONFIG.MAP_SIZE; x++) {
-            map[y][x] = 0;
+            map[y][x] = 0; // 0=草
         }
     }
 
     const rng = seededRNG(seed);
     let totalWater = 0;
-    let targetWater = CONFIG.MAP_SIZE * CONFIG.MAP_SIZE * 0.5;
+    let targetWater = CONFIG.MAP_SIZE * CONFIG.MAP_SIZE * 0.45; // 略低于50%，沙滩会补
 
-    // 生成3~5条主河流
+    // 生成河流
     let riverCount = 3 + Math.floor(rng() * 3);
     for (let r = 0; r < riverCount; r++) {
         let river = generateRiver(rng, CONFIG.MAP_SIZE);
         for (let point of river) {
-            let cx = Math.floor(point.x);
-            let cy = Math.floor(point.y);
+            let cx = Math.floor(point.x), cy = Math.floor(point.y);
             let width = Math.floor(point.w);
             for (let dy = -width; dy <= width; dy++) {
                 for (let dx = -width; dx <= width; dx++) {
-                    let mx = cx + dx;
-                    let my = cy + dy;
-                    if (mx >= 0 && mx < CONFIG.MAP_SIZE && my >= 0 && my < CONFIG.MAP_SIZE) {
-                        if (dx * dx + dy * dy <= width * width && map[my][mx] === 0) {
-                            map[my][mx] = 1;
+                    let mx = cx+dx, my = cy+dy;
+                    if (mx>=0 && mx<CONFIG.MAP_SIZE && my>=0 && my<CONFIG.MAP_SIZE) {
+                        if (dx*dx+dy*dy <= width*width && map[my][mx]===0) {
+                            map[my][mx] = 1; // 1=水
                             totalWater++;
                         }
                     }
@@ -175,22 +160,19 @@ function generateMap(seed) {
         }
     }
 
-    // 补充水域到50%
+    // 补充水域
     let attempts = 0;
     while (totalWater < targetWater && attempts < 20) {
         let river = generateRiver(rng, CONFIG.MAP_SIZE);
         for (let point of river) {
-            let cx = Math.floor(point.x);
-            let cy = Math.floor(point.y);
+            let cx = Math.floor(point.x), cy = Math.floor(point.y);
             let width = Math.floor(point.w);
-            for (let dy = -width; dy <= width; dy++) {
-                for (let dx = -width; dx <= width; dx++) {
-                    let mx = cx + dx;
-                    let my = cy + dy;
-                    if (mx >= 0 && mx < CONFIG.MAP_SIZE && my >= 0 && my < CONFIG.MAP_SIZE) {
-                        if (dx * dx + dy * dy <= width * width && map[my][mx] === 0) {
-                            map[my][mx] = 1;
-                            totalWater++;
+            for (let dy=-width;dy<=width;dy++) {
+                for (let dx=-width;dx<=width;dx++) {
+                    let mx=cx+dx, my=cy+dy;
+                    if (mx>=0&&mx<CONFIG.MAP_SIZE&&my>=0&&my<CONFIG.MAP_SIZE) {
+                        if (dx*dx+dy*dy<=width*width&&map[my][mx]===0) {
+                            map[my][mx]=1; totalWater++;
                         }
                     }
                 }
@@ -199,13 +181,31 @@ function generateMap(seed) {
         attempts++;
     }
 
-    // 中心区域保证是陆地
-    let center = Math.floor(CONFIG.MAP_SIZE / 2);
-    for (let dy = -5; dy <= 5; dy++) {
-        for (let dx = -5; dx <= 5; dx++) {
-            let mx = center + dx;
-            let my = center + dy;
-            if (mx >= 0 && mx < CONFIG.MAP_SIZE && my >= 0 && my < CONFIG.MAP_SIZE) {
+    // 生成沙滩：水边的草地变成沙子(type=2)
+    for (let y = 1; y < CONFIG.MAP_SIZE-1; y++) {
+        for (let x = 1; x < CONFIG.MAP_SIZE-1; x++) {
+            if (map[y][x] !== 0) continue; // 只处理草地
+            // 检查相邻是否有水
+            let nearWater = false;
+            for (let dy=-2; dy<=2; dy++) {
+                for (let dx=-2; dx<=2; dx++) {
+                    let nx=x+dx, ny=y+dy;
+                    if (nx>=0&&nx<CONFIG.MAP_SIZE&&ny>=0&&ny<CONFIG.MAP_SIZE) {
+                        if (map[ny][nx]===1) { nearWater=true; break; }
+                    }
+                }
+                if (nearWater) break;
+            }
+            if (nearWater) map[y][x] = 2; // 2=沙子
+        }
+    }
+
+    // 中心区域保证是草地
+    let center = Math.floor(CONFIG.MAP_SIZE/2);
+    for (let dy=-6; dy<=6; dy++) {
+        for (let dx=-6; dx<=6; dx++) {
+            let mx=center+dx, my=center+dy;
+            if (mx>=0&&mx<CONFIG.MAP_SIZE&&my>=0&&my<CONFIG.MAP_SIZE) {
                 map[my][mx] = 0;
             }
         }
@@ -216,580 +216,475 @@ function generateMap(seed) {
 
 function generateRiver(rng, mapSize) {
     let points = [];
-    let side = Math.floor(rng() * 4);
-    let sx, sy, baseAngle;
-
-    switch (side) {
-        case 0: sx = 0; sy = rng() * mapSize; baseAngle = 0; break;
-        case 1: sx = mapSize; sy = rng() * mapSize; baseAngle = Math.PI; break;
-        case 2: sx = rng() * mapSize; sy = 0; baseAngle = Math.PI / 2; break;
-        case 3: sx = rng() * mapSize; sy = mapSize; baseAngle = -Math.PI / 2; break;
+    let side = Math.floor(rng()*4);
+    let sx,sy,baseAngle;
+    switch(side){
+        case 0: sx=0; sy=rng()*mapSize; baseAngle=0; break;
+        case 1: sx=mapSize; sy=rng()*mapSize; baseAngle=Math.PI; break;
+        case 2: sx=rng()*mapSize; sy=0; baseAngle=Math.PI/2; break;
+        case 3: sx=rng()*mapSize; sy=mapSize; baseAngle=-Math.PI/2; break;
     }
-
-    let x = sx, y = sy;
-    let angle = baseAngle + (rng() - 0.5) * 0.5;
-    let width = 8 + rng() * 15;
-
-    let steps = 200 + Math.floor(rng() * 300);
-    for (let i = 0; i < steps; i++) {
-        points.push({x: x, y: y, w: width});
-        angle += (rng() - 0.5) * 0.15;
-        width += (rng() - 0.5) * 1.5;
-        width = Math.max(8, Math.min(30, width));
-        x += Math.cos(angle) * 3;
-        y += Math.sin(angle) * 3;
-        if (x < -20 || x > mapSize + 20 || y < -20 || y > mapSize + 20) break;
+    let x=sx, y=sy;
+    let angle=baseAngle+(rng()-0.5)*0.5;
+    let width=8+rng()*15;
+    let steps=200+Math.floor(rng()*300);
+    for (let i=0;i<steps;i++) {
+        points.push({x,y,w:width});
+        angle+=(rng()-0.5)*0.15;
+        width+=(rng()-0.5)*1.5;
+        width=Math.max(8,Math.min(30,width));
+        x+=Math.cos(angle)*3;
+        y+=Math.sin(angle)*3;
+        if(x<-20||x>mapSize+20||y<-20||y>mapSize+20) break;
     }
     return points;
 }
 
 function seededRNG(seed) {
-    let s = seed || 12345;
-    return function() {
-        s = (s * 1664525 + 1013904223) & 0xFFFFFFFF;
-        return (s >>> 0) / 4294967296;
-    };
+    let s=seed||12345;
+    return function(){s=(s*1664525+1013904223)&0xFFFFFFFF;return(s>>>0)/4294967296;};
 }
 
-// ===== 工具函数 =====
-
-function getRandomLandPos() {
-    let x, y, attempts = 0;
-    do {
-        x = Math.floor(Math.random() * CONFIG.MAP_SIZE);
-        y = Math.floor(Math.random() * CONFIG.MAP_SIZE);
-        attempts++;
-    } while (gameState.map[y] && gameState.map[y][x] === 1 && attempts < 1000);
-    return {x, y};
+// ===== 工具 =====
+function getRandomLandPos(){
+    let x,y,a=0;
+    do{x=Math.floor(Math.random()*CONFIG.MAP_SIZE);y=Math.floor(Math.random()*CONFIG.MAP_SIZE);a++;}
+    while(gameState.map[y]&&gameState.map[y][x]===1&&a<1000);
+    return{x,y};
 }
-
-function getRandomWaterPos() {
-    let x, y, attempts = 0;
-    do {
-        x = Math.floor(Math.random() * CONFIG.MAP_SIZE);
-        y = Math.floor(Math.random() * CONFIG.MAP_SIZE);
-        attempts++;
-    } while (gameState.map[y] && gameState.map[y][x] === 0 && attempts < 1000);
-    return {x, y};
+function getRandomWaterPos(){
+    let x,y,a=0;
+    do{x=Math.floor(Math.random()*CONFIG.MAP_SIZE);y=Math.floor(Math.random()*CONFIG.MAP_SIZE);a++;}
+    while(gameState.map[y]&&gameState.map[y][x]!==1&&a<1000);
+    return{x,y};
 }
-
-function distBetween(x1, y1, x2, y2) {
-    return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
-}
-
-function angleBetween(x1, y1, x2, y2) {
-    return Math.atan2(y2 - y1, x2 - x1);
-}
-
-function getMySpeed() {
-    if (gameState.myTeam === 'steve') return CONFIG.STEVE_SPEED;
-    switch (gameState.myMonster) {
-        case 'zombie': return CONFIG.ZOMBIE_SPEED;
-        case 'skeleton': return CONFIG.SKELETON_SPEED;
-        case 'creeper': return CONFIG.CREEPER_SPEED;
-        case 'fish': return CONFIG.FISH_SPEED;
-        default: return 5;
+function dist(x1,y1,x2,y2){return Math.sqrt((x2-x1)**2+(y2-y1)**2);}
+function angle(x1,y1,x2,y2){return Math.atan2(y2-y1,x2-x1);}
+function getMySpeed(){
+    if(gameState.myTeam==='steve') return CONFIG.STEVE_SPEED;
+    switch(gameState.myMonster){
+        case'zombie':return CONFIG.ZOMBIE_SPEED;
+        case'skeleton':return CONFIG.SKELETON_SPEED;
+        case'creeper':return CONFIG.CREEPER_SPEED;
+        case'fish':return CONFIG.FISH_SPEED;
+        default:return 4;
     }
 }
 
 // ============ 初始化 ============
 
-function initGame() {
-    canvas = document.getElementById('game-canvas');
-    ctx = canvas.getContext('2d');
-    minimapCanvas = document.getElementById('minimap-canvas');
-    minimapCtx = minimapCanvas.getContext('2d');
-
+function initGame(){
+    canvas=document.getElementById('game-canvas');
+    ctx=canvas.getContext('2d');
+    minimapCanvas=document.getElementById('minimap-canvas');
+    minimapCtx=minimapCanvas.getContext('2d');
     resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-
+    window.addEventListener('resize',resizeCanvas);
     Renderer.init();
     drawLoginIcons();
     setupInput();
     setupHearts();
-
-    document.getElementById('name-input').addEventListener('input', checkJoinBtn);
+    document.getElementById('name-input').addEventListener('input',checkJoinBtn);
     checkJoinBtn();
-
     requestAnimationFrame(gameLoop);
 }
 
-function resizeCanvas() {
-    screenW = window.innerWidth;
-    screenH = window.innerHeight;
-    canvas.width = screenW;
-    canvas.height = screenH;
-    viewTileSize = Math.floor(Math.min(screenW / 28, screenH / 18));
-    if (viewTileSize < 16) viewTileSize = 16;
+function resizeCanvas(){
+    screenW=window.innerWidth; screenH=window.innerHeight;
+    canvas.width=screenW; canvas.height=screenH;
+    viewTileSize=Math.floor(Math.min(screenW/28,screenH/18));
+    if(viewTileSize<16) viewTileSize=16;
 }
 
-function drawLoginIcons() {
-    let pairs = [
-        ['steve-icon', 'steve', 45],
-        ['monster-icon', 'creeper', 45],
-        ['zombie-icon', 'zombie', 35],
-        ['skeleton-icon', 'skeleton', 35],
-        ['creeper-icon', 'creeper', 35],
-        ['fish-icon', 'fish', 35],
-    ];
-    pairs.forEach(([id, type, size]) => {
-        let el = document.getElementById(id);
-        if (el && Renderer.cache[type]) {
-            let c = el.getContext('2d');
-            c.imageSmoothingEnabled = false;
-            let offset = (el.width - size) / 2;
-            c.drawImage(Renderer.cache[type], offset, offset, size, size);
+function drawLoginIcons(){
+    [['steve-icon','steve',45],['monster-icon','creeper',45],
+     ['zombie-icon','zombie',35],['skeleton-icon','skeleton',35],
+     ['creeper-icon','creeper',35],['fish-icon','fish',35]
+    ].forEach(([id,type,size])=>{
+        let el=document.getElementById(id);
+        if(el&&Renderer.cache[type]){
+            let c=el.getContext('2d');
+            c.imageSmoothingEnabled=false;
+            let o=(el.width-size)/2;
+            c.drawImage(Renderer.cache[type],o,o,size,size);
         }
     });
 }
 
-function setupHearts() {
-    let container = document.getElementById('hearts-container');
-    container.innerHTML = '';
-    for (let i = 0; i < 10; i++) {
-        let heart = document.createElement('canvas');
-        heart.width = 13;
-        heart.height = 13;
-        heart.className = 'heart';
-        heart.id = 'heart-' + i;
-        container.appendChild(heart);
+function setupHearts(){
+    let container=document.getElementById('hearts-container');
+    container.innerHTML='';
+    for(let i=0;i<10;i++){
+        let h=document.createElement('canvas');
+        h.width=13;h.height=13;h.className='heart';h.id='heart-'+i;
+        container.appendChild(h);
     }
     updateHearts();
 }
 
-function updateHearts() {
-    for (let i = 0; i < 10; i++) {
-        let heartCanvas = document.getElementById('heart-' + i);
-        if (!heartCanvas) continue;
-        let hctx = heartCanvas.getContext('2d');
-        hctx.clearRect(0, 0, 13, 13);
-        hctx.imageSmoothingEnabled = false;
-
-        let heartHp = localPlayer.hp - i * 2;
+function updateHearts(){
+    for(let i=0;i<10;i++){
+        let hc=document.getElementById('heart-'+i);
+        if(!hc)continue;
+        let hx=hc.getContext('2d');
+        hx.clearRect(0,0,13,13);
+        hx.imageSmoothingEnabled=false;
+        let hp=localPlayer.hp-i*2;
         let img;
-        if (heartHp >= 2) img = Renderer.cache.heartFull;
-        else if (heartHp === 1) img = Renderer.cache.heartHalf;
-        else img = Renderer.cache.heartEmpty;
-
-        if (img) hctx.drawImage(img, 0, 0, 13, 13);
+        if(hp>=2)img=Renderer.cache.heartFull;
+        else if(hp===1)img=Renderer.cache.heartHalf;
+        else img=Renderer.cache.heartEmpty;
+        if(img)hx.drawImage(img,0,0,13,13);
     }
 }
 
-// ============ 界面逻辑 ============
+// ============ 界面 ============
 
-let selectedTeam = null;
-let selectedMonster = null;
+let selectedTeam=null, selectedMonster=null;
 
-function selectTeam(team) {
-    selectedTeam = team;
-    document.getElementById('btn-steve').classList.toggle('selected', team === 'steve');
-    document.getElementById('btn-monster').classList.toggle('selected', team === 'monster');
-    document.getElementById('monster-select').classList.toggle('show', team === 'monster');
-    if (team === 'steve') selectedMonster = null;
+function selectTeam(team){
+    selectedTeam=team;
+    document.getElementById('btn-steve').classList.toggle('selected',team==='steve');
+    document.getElementById('btn-monster').classList.toggle('selected',team==='monster');
+    document.getElementById('monster-select').classList.toggle('show',team==='monster');
+    if(team==='steve')selectedMonster=null;
     checkJoinBtn();
 }
 
-function selectMonster(monster) {
-    selectedMonster = monster;
-    document.querySelectorAll('.monster-btn').forEach(b => b.classList.remove('selected'));
+function selectMonster(monster){
+    selectedMonster=monster;
+    document.querySelectorAll('.monster-btn').forEach(b=>b.classList.remove('selected'));
     event.currentTarget.classList.add('selected');
     checkJoinBtn();
 }
 
-function checkJoinBtn() {
-    let name = document.getElementById('name-input').value.trim();
-    let canJoin = selectedTeam && (selectedTeam === 'steve' || selectedMonster) && name;
-    document.getElementById('join-btn').disabled = !canJoin;
+function checkJoinBtn(){
+    let name=document.getElementById('name-input').value.trim();
+    let can=selectedTeam&&(selectedTeam==='steve'||selectedMonster)&&name;
+    document.getElementById('join-btn').disabled=!can;
 }
 
-function joinGame() {
-    let name = document.getElementById('name-input').value.trim() || '鼠鼠';
-    gameState.myTeam = selectedTeam;
-    gameState.myMonster = selectedMonster;
-    gameState.myName = name;
+function joinGame(){
+    let name=document.getElementById('name-input').value.trim()||'鼠鼠';
+    gameState.myTeam=selectedTeam;
+    gameState.myMonster=selectedMonster;
+    gameState.myName=name;
 
-    if (selectedTeam === 'steve') {
-        localPlayer.maxHp = CONFIG.STEVE_HP;
-        localPlayer.hp = CONFIG.STEVE_HP;
-        localPlayer.lives = CONFIG.STEVE_LIVES;
-        localPlayer.arrows = CONFIG.MAX_ARROWS;
-        localPlayer.swordDurability = CONFIG.SWORD_DURABILITY;
-        localPlayer.potions = 1;
+    if(selectedTeam==='steve'){
+        localPlayer.maxHp=CONFIG.STEVE_HP; localPlayer.hp=CONFIG.STEVE_HP;
+        localPlayer.lives=CONFIG.STEVE_LIVES;
+        localPlayer.arrows=CONFIG.MAX_ARROWS;
+        localPlayer.swordDurability=CONFIG.SWORD_DURABILITY;
+        localPlayer.potions=1;
     } else {
-        switch (selectedMonster) {
-            case 'fish':
-                localPlayer.maxHp = CONFIG.FISH_HP;
-                localPlayer.hp = CONFIG.FISH_HP;
-                break;
-            default:
-                localPlayer.maxHp = 20;
-                localPlayer.hp = 20;
-        }
-        localPlayer.lives = 999;
+        localPlayer.maxHp=selectedMonster==='fish'?CONFIG.FISH_HP:20;
+        localPlayer.hp=localPlayer.maxHp;
+        localPlayer.lives=999;
     }
-
-    NetworkManager.autoJoin({
-        name: name,
-        team: selectedTeam,
-        monster: selectedMonster,
-    });
+    NetworkManager.autoJoin({name,team:selectedTeam,monster:selectedMonster});
 }
 
-// ============ 输入处理 ============
+// 切换怪物（复活期间）
+function switchMonster(type){
+    gameState.myMonster=type;
+    localPlayer.maxHp=type==='fish'?CONFIG.FISH_HP:20;
+    // 更新UI高亮
+    document.querySelectorAll('#switch-panel .switch-btn').forEach(b=>b.classList.remove('active'));
+    event.currentTarget.classList.add('active');
+    NetworkManager.updateMonsterType(type);
+}
 
-function setupInput() {
-    window.addEventListener('keydown', e => {
-        input.keys[e.key.toLowerCase()] = true;
-        if (gameState.phase !== 'playing') return;
-        if (e.key === 'j' || e.key === 'J') attackSword();
-        if (e.key === 'k' || e.key === 'K') startBowCharge();
-        if (e.key === 'l' || e.key === 'L') usePotion();
+// 退出到大厅
+function exitToLobby(){
+    NetworkManager.cleanup();
+    location.reload();
+}
+
+// ============ 输入 ============
+
+function setupInput(){
+    window.addEventListener('keydown',e=>{
+        input.keys[e.key.toLowerCase()]=true;
+        if(gameState.phase!=='playing')return;
+        if(e.key==='j'||e.key==='J') doAttack();
+        if(e.key==='k'||e.key==='K') startBowCharge();
+        if(e.key==='l'||e.key==='L') usePotion();
     });
-    window.addEventListener('keyup', e => {
-        input.keys[e.key.toLowerCase()] = false;
-        if (e.key === 'k' || e.key === 'K') releaseBow();
+    window.addEventListener('keyup',e=>{
+        input.keys[e.key.toLowerCase()]=false;
+        if(e.key==='k'||e.key==='K') releaseBow();
     });
 
-    window.addEventListener('mousemove', e => {
-        if (!localPlayer.bowCharging) return;
-        let cx = screenW / 2;
-        let cy = screenH / 2;
-        let dx = e.clientX - cx;
-        let dy = e.clientY - cy;
-        let dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist > 0) {
-            input.aimDir = {x: dx / dist, y: dy / dist};
-            localPlayer.aimAngle = Math.atan2(dy, dx);
+    // 鼠标瞄准
+    window.addEventListener('mousemove',e=>{
+        if(gameState.phase!=='playing')return;
+        let cx=screenW/2, cy=screenH/2;
+        let dx=e.clientX-cx, dy=e.clientY-cy;
+        let d=Math.sqrt(dx*dx+dy*dy);
+        if(d>0){
+            input.aimDir={x:dx/d,y:dy/d};
+            localPlayer.aimAngle=Math.atan2(dy,dx);
         }
     });
 
     setupJoystick();
 
-    let atkBtn = document.getElementById('attack-btn');
-    atkBtn.addEventListener('touchstart', e => { e.preventDefault(); attackSword(); });
-    atkBtn.addEventListener('mousedown', e => { e.preventDefault(); attackSword(); });
+    // 史蒂夫按钮
+    let atk=document.getElementById('attack-btn');
+    atk.addEventListener('touchstart',e=>{e.preventDefault();doAttack();});
+    atk.addEventListener('mousedown',e=>{e.preventDefault();doAttack();});
 
-    let bowBtn = document.getElementById('bow-btn');
-    bowBtn.addEventListener('touchstart', e => { e.preventDefault(); startBowCharge(); showAimJoystick(); });
-    bowBtn.addEventListener('mousedown', e => { e.preventDefault(); startBowCharge(); });
-    bowBtn.addEventListener('touchend', e => { releaseBow(); hideAimJoystick(); });
-    bowBtn.addEventListener('mouseup', e => { releaseBow(); });
+    let bow=document.getElementById('bow-btn');
+    bow.addEventListener('touchstart',e=>{e.preventDefault();startBowCharge();});
+    bow.addEventListener('mousedown',e=>{e.preventDefault();startBowCharge();});
+    bow.addEventListener('touchend',e=>{releaseBow();});
+    bow.addEventListener('mouseup',e=>{releaseBow();});
 
-    let potBtn = document.getElementById('potion-btn');
-    potBtn.addEventListener('touchstart', e => { e.preventDefault(); usePotion(); });
-    potBtn.addEventListener('mousedown', e => { e.preventDefault(); usePotion(); });
+    let pot=document.getElementById('potion-btn');
+    pot.addEventListener('touchstart',e=>{e.preventDefault();usePotion();});
+    pot.addEventListener('mousedown',e=>{e.preventDefault();usePotion();});
 
-    setupAimJoystick();
+    // 怪物攻击按钮
+    let matk=document.getElementById('monster-attack-btn');
+    matk.addEventListener('touchstart',e=>{e.preventDefault();doAttack();});
+    matk.addEventListener('mousedown',e=>{e.preventDefault();doAttack();});
 }
 
-function setupJoystick() {
-    const base = document.getElementById('joystick-base');
-    const stick = document.getElementById('joystick-stick');
-    let touching = false;
-    let baseRect;
+function setupJoystick(){
+    const base=document.getElementById('joystick-base');
+    const stick=document.getElementById('joystick-stick');
+    let touching=false, baseRect;
 
-    function handleStart(e) {
-        e.preventDefault();
-        touching = true;
-        input.joystickActive = true;
-        baseRect = base.getBoundingClientRect();
+    function start(e){e.preventDefault();touching=true;input.joystickActive=true;baseRect=base.getBoundingClientRect();}
+    function move(e){
+        if(!touching)return;
+        let cx2,cy2;
+        if(e.touches){cx2=e.touches[0].clientX;cy2=e.touches[0].clientY;}
+        else{cx2=e.clientX;cy2=e.clientY;}
+        let cX=baseRect.left+baseRect.width/2;
+        let cY=baseRect.top+baseRect.height/2;
+        let dx=cx2-cX, dy=cy2-cY;
+        let d=Math.sqrt(dx*dx+dy*dy);
+        let max=baseRect.width/2-20;
+        if(d>max){dx=(dx/d)*max;dy=(dy/d)*max;}
+        stick.style.left=(50+(dx/baseRect.width)*100)+'%';
+        stick.style.top=(50+(dy/baseRect.height)*100)+'%';
+        input.joystickDir={x:dx/max,y:dy/max};
     }
-    function handleMove(e) {
-        if (!touching) return;
-        let clientX, clientY;
-        if (e.touches) { clientX = e.touches[0].clientX; clientY = e.touches[0].clientY; }
-        else { clientX = e.clientX; clientY = e.clientY; }
-        let centerX = baseRect.left + baseRect.width / 2;
-        let centerY = baseRect.top + baseRect.height / 2;
-        let dx = clientX - centerX;
-        let dy = clientY - centerY;
-        let dist = Math.sqrt(dx * dx + dy * dy);
-        let maxDist = baseRect.width / 2 - 20;
-        if (dist > maxDist) { dx = (dx / dist) * maxDist; dy = (dy / dist) * maxDist; }
-        stick.style.left = (50 + (dx / baseRect.width) * 100) + '%';
-        stick.style.top = (50 + (dy / baseRect.height) * 100) + '%';
-        input.joystickDir = {x: dx / maxDist, y: dy / maxDist};
-    }
-    function handleEnd() {
-        touching = false;
-        input.joystickActive = false;
-        input.joystickDir = {x: 0, y: 0};
-        stick.style.left = '50%';
-        stick.style.top = '50%';
+    function end(){
+        touching=false;input.joystickActive=false;
+        input.joystickDir={x:0,y:0};
+        stick.style.left='50%';stick.style.top='50%';
     }
 
-    base.addEventListener('touchstart', handleStart);
-    base.addEventListener('mousedown', handleStart);
-    document.addEventListener('touchmove', e => { if (touching) handleMove(e); });
-    document.addEventListener('mousemove', e => { if (touching) handleMove(e); });
-    document.addEventListener('touchend', handleEnd);
-    document.addEventListener('mouseup', handleEnd);
+    base.addEventListener('touchstart',start);
+    base.addEventListener('mousedown',start);
+    document.addEventListener('touchmove',e=>{if(touching)move(e);});
+    document.addEventListener('mousemove',e=>{if(touching)move(e);});
+    document.addEventListener('touchend',end);
+    document.addEventListener('mouseup',end);
 }
 
-function setupAimJoystick() {
-    const base = document.getElementById('aim-base');
-    const stick = document.getElementById('aim-stick');
-    let touching = false;
-    let baseRect;
+// ============ 战斗 ============
 
-    function handleStart(e) {
-        e.preventDefault();
-        touching = true;
-        input.aimActive = true;
-        baseRect = base.getBoundingClientRect();
-    }
-    function handleMove(e) {
-        if (!touching) return;
-        let clientX, clientY;
-        if (e.touches) {
-            for (let t of e.touches) {
-                if (t.clientX > screenW / 2) { clientX = t.clientX; clientY = t.clientY; break; }
-            }
-            if (!clientX) return;
-        } else { clientX = e.clientX; clientY = e.clientY; }
-        let centerX = baseRect.left + baseRect.width / 2;
-        let centerY = baseRect.top + baseRect.height / 2;
-        let dx = clientX - centerX;
-        let dy = clientY - centerY;
-        let dist = Math.sqrt(dx * dx + dy * dy);
-        let maxDist = 40;
-        if (dist > maxDist) { dx = (dx / dist) * maxDist; dy = (dy / dist) * maxDist; }
-        stick.style.left = (50 + (dx / baseRect.width) * 100) + '%';
-        stick.style.top = (50 + (dy / baseRect.height) * 100) + '%';
-        if (dist > 5) {
-            input.aimDir = {x: dx / dist, y: dy / dist};
-            localPlayer.aimAngle = Math.atan2(dy, dx);
-        }
-    }
-    function handleEnd() {
-        touching = false;
-        input.aimActive = false;
-        stick.style.left = '50%';
-        stick.style.top = '50%';
-    }
+// 统一攻击函数
+function doAttack(){
+    if(!localPlayer.alive||gameState.phase!=='playing')return;
+    if(localPlayer.swordCooldown>0)return;
 
-    base.addEventListener('touchstart', handleStart);
-    document.addEventListener('touchmove', e => { if (touching) handleMove(e); });
-    document.addEventListener('touchend', e => {
-        if (touching) { handleEnd(); releaseBow(); hideAimJoystick(); }
-    });
-}
-
-function showAimJoystick() {
-    document.getElementById('aim-area').style.display = 'block';
-    document.getElementById('bow-btn').style.display = 'none';
-}
-function hideAimJoystick() {
-    document.getElementById('aim-area').style.display = 'none';
-    document.getElementById('bow-btn').style.display = 'flex';
-}
-
-// ============ 战斗系统 ============
-
-function attackSword() {
-    if (!localPlayer.alive || gameState.phase !== 'playing') return;
-    if (localPlayer.swordCooldown > 0) return;
-
-    localPlayer.swordCooldown = CONFIG.SWORD_COOLDOWN;
-    localPlayer.lastWeapon = 'sword';
-
-    if (gameState.myTeam === 'steve') {
-        if (localPlayer.swordDurability <= 0) return;
-        localPlayer.swordDurability--;
-
-        let target = findNearestEnemy(CONFIG.SWORD_RANGE);
-        if (target) {
-            let angle = angleBetween(localPlayer.x, localPlayer.y, target.x, target.y);
-            triggerSlash(angle);
-            sendDamageToTarget(target, CONFIG.SWORD_DAMAGE, angle);
-        } else {
-            triggerSlash(localPlayer.facingAngle);
-        }
+    if(gameState.myTeam==='steve'){
+        attackSword();
     } else {
-        if (gameState.myMonster === 'creeper') { creeperExplode(); return; }
-        if (gameState.myMonster === 'skeleton') { shootSkeletonArrow(); return; }
+        monsterAttack();
+    }
+}
 
-        let range = gameState.myMonster === 'fish' ? CONFIG.FISH_RANGE : CONFIG.ZOMBIE_RANGE;
-        let damage = gameState.myMonster === 'fish' ? CONFIG.FISH_DAMAGE : CONFIG.ZOMBIE_DAMAGE;
-        let target = findNearestSteve(range);
-        if (target) {
-            let angle = angleBetween(localPlayer.x, localPlayer.y, target.x, target.y);
-            triggerSlash(angle);
-            sendDamageToTarget(target, damage, angle);
-        } else {
-            triggerSlash(localPlayer.facingAngle);
+function attackSword(){
+    if(localPlayer.swordDurability<=0)return;
+    localPlayer.swordCooldown=CONFIG.SWORD_COOLDOWN;
+    localPlayer.lastWeapon='sword';
+    localPlayer.swordDurability--;
+
+    let target=findNearestEnemy(CONFIG.SWORD_RANGE);
+    let slashDir=localPlayer.facingAngle;
+    if(target){
+        slashDir=angle(localPlayer.x,localPlayer.y,target.x,target.y);
+        NetworkManager.sendDamage(target.id,CONFIG.SWORD_DAMAGE,slashDir);
+    }
+    triggerSlash(slashDir);
+    updateHUD();
+}
+
+function monsterAttack(){
+    localPlayer.swordCooldown=CONFIG.SWORD_COOLDOWN;
+
+    switch(gameState.myMonster){
+        case'zombie':
+        case'fish':{
+            let range=gameState.myMonster==='fish'?CONFIG.FISH_RANGE:CONFIG.ZOMBIE_RANGE;
+            let dmg=gameState.myMonster==='fish'?CONFIG.FISH_DAMAGE:CONFIG.ZOMBIE_DAMAGE;
+            let target=findNearestSteve(range);
+            let dir=localPlayer.facingAngle;
+            if(target){
+                dir=angle(localPlayer.x,localPlayer.y,target.x,target.y);
+                NetworkManager.sendDamage(target.id,dmg,dir);
+            }
+            triggerSlash(dir);
+            break;
+        }
+        case'skeleton':{
+            let target=findNearestSteve(CONFIG.SKELETON_RANGE);
+            if(!target)return;
+            let dir=angle(localPlayer.x,localPlayer.y,target.x,target.y);
+            let arrow={
+                id:gameState.myId+'_'+Date.now(),
+                x:localPlayer.x,y:localPlayer.y,
+                dirX:Math.cos(dir),dirY:Math.sin(dir),
+                damage:CONFIG.SKELETON_DAMAGE,
+                speed:CONFIG.ARROW_SPEED,
+                owner:gameState.myId,ownerTeam:'monster',
+                trail:[{x:localPlayer.x,y:localPlayer.y}],
+                distTraveled:0,
+            };
+            gameState.projectiles.push(arrow);
+            NetworkManager.sendProjectile(arrow);
+            break;
+        }
+        case'creeper':{
+            creeperExplode();
+            break;
         }
     }
-    updateHUD();
 }
 
-function triggerSlash(angle) {
-    localPlayer.slashActive = true;
-    localPlayer.slashTimer = 0.2;
-    localPlayer.slashAngle = angle;
+function triggerSlash(a){
+    localPlayer.slashActive=true;
+    localPlayer.slashTimer=0.2;
+    localPlayer.slashAngle=a;
 }
 
-function startBowCharge() {
-    if (!localPlayer.alive || gameState.phase !== 'playing') return;
-    if (gameState.myTeam !== 'steve') return;
-    if (localPlayer.arrows <= 0) return;
-    if (localPlayer.bowCooldown > 0) return;
+function startBowCharge(){
+    if(!localPlayer.alive||gameState.phase!=='playing')return;
+    if(gameState.myTeam!=='steve')return;
+    if(localPlayer.arrows<=0||localPlayer.bowCooldown>0)return;
 
-    localPlayer.bowCharging = true;
-    localPlayer.bowChargeStart = Date.now();
-    localPlayer.lastWeapon = 'bow';
+    localPlayer.bowCharging=true;
+    localPlayer.bowChargeStart=Date.now();
+    localPlayer.lastWeapon='bow';
+
+    // 显示蓄力条
+    document.getElementById('bow-charge-bar').style.display='block';
+    document.getElementById('aim-hint').style.display='block';
 }
 
-function releaseBow() {
-    if (!localPlayer.bowCharging) return;
-    localPlayer.bowCharging = false;
+function releaseBow(){
+    if(!localPlayer.bowCharging)return;
+    localPlayer.bowCharging=false;
 
-    if (localPlayer.arrows <= 0) return;
+    document.getElementById('bow-charge-bar').style.display='none';
+    document.getElementById('bow-charge-fill').style.width='0%';
+    document.getElementById('aim-hint').style.display='none';
+
+    if(localPlayer.arrows<=0)return;
     localPlayer.arrows--;
-    localPlayer.bowCooldown = CONFIG.BOW_COOLDOWN;
+    localPlayer.bowCooldown=CONFIG.BOW_COOLDOWN;
 
-    let chargeTime = (Date.now() - localPlayer.bowChargeStart) / 1000;
-    chargeTime = Math.min(chargeTime, CONFIG.BOW_CHARGE_TIME);
-    let ratio = chargeTime / CONFIG.BOW_CHARGE_TIME;
-    let damage = Math.round(CONFIG.BOW_DAMAGE_MIN + (CONFIG.BOW_DAMAGE_MAX - CONFIG.BOW_DAMAGE_MIN) * ratio);
+    let charge=(Date.now()-localPlayer.bowChargeStart)/1000;
+    charge=Math.min(charge,CONFIG.BOW_CHARGE_TIME);
+    let ratio=charge/CONFIG.BOW_CHARGE_TIME;
+    let dmg=Math.round(CONFIG.BOW_DAMAGE_MIN+(CONFIG.BOW_DAMAGE_MAX-CONFIG.BOW_DAMAGE_MIN)*ratio);
 
-    let dirX = input.aimDir.x || Math.cos(localPlayer.aimAngle);
-    let dirY = input.aimDir.y || Math.sin(localPlayer.aimAngle);
-    if (Math.abs(dirX) < 0.01 && Math.abs(dirY) < 0.01) {
-        dirX = Math.cos(localPlayer.facingAngle);
-        dirY = Math.sin(localPlayer.facingAngle);
+    let dirX=input.aimDir.x, dirY=input.aimDir.y;
+    if(Math.abs(dirX)<0.01&&Math.abs(dirY)<0.01){
+        dirX=Math.cos(localPlayer.facingAngle);
+        dirY=Math.sin(localPlayer.facingAngle);
     }
 
-    let arrow = {
-        id: gameState.myId + '_' + Date.now(),
-        x: localPlayer.x, y: localPlayer.y,
-        dirX: dirX, dirY: dirY,
-        damage: damage,
-        speed: CONFIG.ARROW_SPEED,
-        owner: gameState.myId,
-        ownerTeam: gameState.myTeam,
-        trail: [{x: localPlayer.x, y: localPlayer.y}],
-        distTraveled: 0,
+    let arrow={
+        id:gameState.myId+'_'+Date.now(),
+        x:localPlayer.x,y:localPlayer.y,
+        dirX,dirY,damage:dmg,
+        speed:CONFIG.ARROW_SPEED,
+        owner:gameState.myId,ownerTeam:'steve',
+        trail:[{x:localPlayer.x,y:localPlayer.y}],
+        distTraveled:0,
     };
-
     gameState.projectiles.push(arrow);
     NetworkManager.sendProjectile(arrow);
     updateHUD();
 }
 
-function shootSkeletonArrow() {
-    if (localPlayer.swordCooldown > 0) return;
-    localPlayer.swordCooldown = CONFIG.SWORD_COOLDOWN;
-
-    let target = findNearestSteve(CONFIG.SKELETON_RANGE);
-    if (!target) return;
-
-    let angle = angleBetween(localPlayer.x, localPlayer.y, target.x, target.y);
-    let arrow = {
-        id: gameState.myId + '_' + Date.now(),
-        x: localPlayer.x, y: localPlayer.y,
-        dirX: Math.cos(angle), dirY: Math.sin(angle),
-        damage: CONFIG.SKELETON_DAMAGE,
-        speed: CONFIG.ARROW_SPEED,
-        owner: gameState.myId,
-        ownerTeam: 'monster',
-        trail: [{x: localPlayer.x, y: localPlayer.y}],
-        distTraveled: 0,
-    };
-    gameState.projectiles.push(arrow);
-    NetworkManager.sendProjectile(arrow);
-}
-
-function creeperExplode() {
-    let px = localPlayer.x, py = localPlayer.y;
-
-    let allTargets = getAllEntities();
-    allTargets.forEach(target => {
-        if (target.id === gameState.myId) return;
-        if (target.team === 'monster' && gameState.myTeam === 'monster') return;
-        let dist = distBetween(px, py, target.x, target.y);
-        let gridDist = Math.ceil(dist);
-        if (gridDist <= 5 && CREEPER_DMG[gridDist]) {
-            let angle = angleBetween(px, py, target.x, target.y);
-            NetworkManager.sendDamage(target.id, CREEPER_DMG[gridDist], angle);
+function creeperExplode(){
+    let px=localPlayer.x,py=localPlayer.y;
+    let all=getAllEntities();
+    all.forEach(t=>{
+        if(t.id===gameState.myId)return;
+        if(t.team==='monster'&&gameState.myTeam==='monster')return;
+        let d=dist(px,py,t.x,t.y);
+        let g=Math.ceil(d);
+        if(g<=5&&CREEPER_DMG[g]){
+            let a=angle(px,py,t.x,t.y);
+            NetworkManager.sendDamage(t.id,CREEPER_DMG[g],a);
         }
     });
-
-    gameState.effects.push({type: 'explosion', x: px, y: py, timer: 0.5, maxTimer: 0.5});
-    NetworkManager.sendExplosion(px, py);
-
-    localPlayer.hp = 0;
-    localPlayer.alive = false;
+    gameState.effects.push({type:'explosion',x:px,y:py,timer:0.5,maxTimer:0.5});
+    NetworkManager.sendExplosion(px,py);
+    localPlayer.hp=0;localPlayer.alive=false;
     handleDeath();
 }
 
-function usePotion() {
-    if (!localPlayer.alive || gameState.phase !== 'playing') return;
-    if (localPlayer.potions <= 0) return;
-    if (localPlayer.hp >= localPlayer.maxHp) return;
-
+function usePotion(){
+    if(!localPlayer.alive||gameState.phase!=='playing')return;
+    if(gameState.myTeam!=='steve')return;
+    if(localPlayer.potions<=0||localPlayer.hp>=localPlayer.maxHp)return;
     localPlayer.potions--;
-    localPlayer.hp = Math.min(localPlayer.hp + CONFIG.POTION_HEAL, localPlayer.maxHp);
+    localPlayer.hp=Math.min(localPlayer.hp+CONFIG.POTION_HEAL,localPlayer.maxHp);
     updateHUD();
     NetworkManager.syncPlayer();
 }
-// ============ 查找目标 ============
 
-function findNearestEnemy(range) {
-    let nearest = null;
-    let nearestDist = range + 0.1;
-
-    Object.values(gameState.players).forEach(p => {
-        if (!p.alive || p.id === gameState.myId) return;
-        if (gameState.myTeam === 'steve' && p.team === 'steve') return;
-        if (gameState.myTeam === 'monster' && p.team === 'monster') return;
-        let d = distBetween(localPlayer.x, localPlayer.y, p.x, p.y);
-        if (d < nearestDist) { nearestDist = d; nearest = p; }
+// ===== 查找目标 =====
+function findNearestEnemy(range){
+    let nearest=null, nd=range+0.1;
+    Object.values(gameState.players).forEach(p=>{
+        if(!p.alive||p.id===gameState.myId)return;
+        if(gameState.myTeam==='steve'&&p.team==='steve')return;
+        if(gameState.myTeam==='monster'&&p.team==='monster')return;
+        let d2=dist(localPlayer.x,localPlayer.y,p.x,p.y);
+        if(d2<nd){nd=d2;nearest=p;}
     });
-
-    // AI怪物（对史蒂夫）
-    if (gameState.myTeam === 'steve') {
-        gameState.aiMonsters.forEach(m => {
-            if (!m.alive) return;
-            let d = distBetween(localPlayer.x, localPlayer.y, m.x, m.y);
-            if (d < nearestDist) { nearestDist = d; nearest = m; }
+    if(gameState.myTeam==='steve'){
+        gameState.aiMonsters.forEach(m=>{
+            if(!m.alive)return;
+            let d2=dist(localPlayer.x,localPlayer.y,m.x,m.y);
+            if(d2<nd){nd=d2;nearest=m;}
         });
-        // 鱼群（对史蒂夫）
-        (gameState.aiFish || []).forEach(fish => {
-            if (!fish.alive) return;
-            let d = distBetween(localPlayer.x, localPlayer.y, fish.x, fish.y);
-            if (d < nearestDist) { nearestDist = d; nearest = fish; }
+        (gameState.aiFish||[]).forEach(f=>{
+            if(!f.alive)return;
+            let d2=dist(localPlayer.x,localPlayer.y,f.x,f.y);
+            if(d2<nd){nd=d2;nearest=f;}
         });
     }
-
     return nearest;
 }
 
-function findNearestSteve(range) {
-    let nearest = null;
-    let nearestDist = range + 0.1;
-    Object.values(gameState.players).forEach(p => {
-        if (!p.alive || p.team !== 'steve') return;
-        let d = distBetween(localPlayer.x, localPlayer.y, p.x, p.y);
-        if (d < nearestDist) { nearestDist = d; nearest = p; }
+function findNearestSteve(range){
+    let nearest=null,nd=range+0.1;
+    Object.values(gameState.players).forEach(p=>{
+        if(!p.alive||p.team!=='steve')return;
+        let d2=dist(localPlayer.x,localPlayer.y,p.x,p.y);
+        if(d2<nd){nd=d2;nearest=p;}
     });
     return nearest;
 }
 
-function getAllEntities() {
-    let entities = [];
-    Object.values(gameState.players).forEach(p => {
-        if (p.alive && p.id !== gameState.myId) entities.push(p);
-    });
-    gameState.aiMonsters.forEach(m => { if (m.alive) entities.push(m); });
-    (gameState.aiFish || []).forEach(f => { if (f.alive) entities.push(f); });
-    return entities;
+function getAllEntities(){
+    let e=[];
+    Object.values(gameState.players).forEach(p=>{if(p.alive&&p.id!==gameState.myId)e.push(p);});
+    gameState.aiMonsters.forEach(m=>{if(m.alive)e.push(m);});
+    (gameState.aiFish||[]).forEach(f=>{if(f.alive)e.push(f);});
+    return e;
 }
-
-function sendDamageToTarget(target, damage, angle) {
-    NetworkManager.sendDamage(target.id, damage, angle);
-}
-
 // ============ 受伤/击退/死亡 ============
 
 function takeDamage(amount, fromAngle) {
@@ -801,6 +696,7 @@ function takeDamage(amount, fromAngle) {
     }
 
     localPlayer.hp -= amount;
+    localPlayer.hitFlash = CONFIG.HIT_FLASH_TIME; // 受击变红
     applyKnockback(fromAngle);
 
     if (localPlayer.hp <= 0) {
@@ -808,7 +704,6 @@ function takeDamage(amount, fromAngle) {
         localPlayer.alive = false;
         handleDeath();
     }
-
     updateHUD();
     NetworkManager.syncPlayer();
 }
@@ -836,17 +731,33 @@ function handleDeath() {
 
         if (localPlayer.lives > 0) {
             localPlayer.respawnTimer = 5;
-            showDeath();
+            showDeath(false);
         } else {
             NetworkManager.sendPermaDeath();
-            showDeath();
+            showDeath(false);
             checkGameOver();
         }
     } else {
         localPlayer.respawnTimer = CONFIG.MONSTER_RESPAWN;
-        showDeath();
+        showDeath(true); // 怪物显示切换面板
     }
     NetworkManager.syncPlayer();
+}
+
+function showDeath(showSwitch) {
+    document.getElementById('death-overlay').style.display = 'flex';
+    let switchPanel = document.getElementById('switch-panel');
+    if (showSwitch) {
+        switchPanel.style.display = 'flex';
+        // 高亮当前怪物
+        document.querySelectorAll('#switch-panel .switch-btn').forEach(b => b.classList.remove('active'));
+    } else {
+        switchPanel.style.display = 'none';
+    }
+}
+
+function hideDeath() {
+    document.getElementById('death-overlay').style.display = 'none';
 }
 
 function respawn() {
@@ -854,6 +765,7 @@ function respawn() {
     localPlayer.hp = localPlayer.maxHp;
     localPlayer.knockback = false;
     localPlayer.knockbackTimer = 0;
+    localPlayer.hitFlash = 0;
 
     if (gameState.myTeam === 'steve') {
         localPlayer.x = CONFIG.MAP_SIZE / 2;
@@ -862,6 +774,9 @@ function respawn() {
         localPlayer.arrows = CONFIG.MAX_ARROWS;
         localPlayer.potions = 1;
     } else {
+        // 可能切换了怪物种类
+        localPlayer.maxHp = gameState.myMonster === 'fish' ? CONFIG.FISH_HP : 20;
+        localPlayer.hp = localPlayer.maxHp;
         let pos;
         if (gameState.myMonster === 'fish') pos = getRandomWaterPos();
         else pos = getRandomLandPos();
@@ -874,20 +789,12 @@ function respawn() {
     NetworkManager.syncPlayer();
 }
 
-function showDeath() { document.getElementById('death-overlay').style.display = 'flex'; }
-function hideDeath() { document.getElementById('death-overlay').style.display = 'none'; }
-
 // ============ 补给/拾取 ============
 
 function checkSupply() {
-    if (gameState.myTeam !== 'steve') return;
-    if (!localPlayer.alive) return;
-    if (!gameState.supplyReady) return;
-
+    if (gameState.myTeam !== 'steve' || !localPlayer.alive || !gameState.supplyReady) return;
     let center = CONFIG.MAP_SIZE / 2;
-    let dist = distBetween(localPlayer.x, localPlayer.y, center, center);
-
-    if (dist <= CONFIG.SUPPLY_RANGE) {
+    if (dist(localPlayer.x, localPlayer.y, center, center) <= CONFIG.SUPPLY_RANGE) {
         gameState.supplyReady = false;
         gameState.supplyTimer = CONFIG.SUPPLY_COOLDOWN;
         localPlayer.arrows = CONFIG.MAX_ARROWS;
@@ -899,16 +806,11 @@ function checkSupply() {
 }
 
 function checkPickup() {
-    if (gameState.myTeam !== 'steve') return;
-    if (!localPlayer.alive) return;
-
+    if (gameState.myTeam !== 'steve' || !localPlayer.alive) return;
     gameState.droppedItems = gameState.droppedItems.filter(item => {
-        let dist = distBetween(localPlayer.x, localPlayer.y, item.x, item.y);
-        if (dist < 1.5) {
+        if (dist(localPlayer.x, localPlayer.y, item.x, item.y) < 1.5) {
             localPlayer.arrows = Math.min(localPlayer.arrows + (item.arrows || 0), CONFIG.MAX_ARROWS);
-            if ((item.swordDurability || 0) > localPlayer.swordDurability) {
-                localPlayer.swordDurability = item.swordDurability;
-            }
+            if ((item.swordDurability || 0) > localPlayer.swordDurability) localPlayer.swordDurability = item.swordDurability;
             localPlayer.potions += (item.potions || 0);
             NetworkManager.removeDroppedItem(item.id);
             updateHUD();
@@ -930,7 +832,6 @@ function gameLoop(timestamp) {
         render();
         renderMinimap();
     }
-
     requestAnimationFrame(gameLoop);
 }
 
@@ -943,7 +844,7 @@ function update(dt) {
                 Math.ceil(localPlayer.respawnTimer) + '秒后复活...';
             if (localPlayer.respawnTimer <= 0) {
                 if (gameState.myTeam === 'steve' && localPlayer.lives <= 0) {
-                    // 永久死亡，不复活
+                    // 永久死亡
                 } else {
                     respawn();
                 }
@@ -955,36 +856,32 @@ function update(dt) {
         return;
     }
 
-    // 击退
+    // 受击红闪倒计时
+    if (localPlayer.hitFlash > 0) localPlayer.hitFlash -= dt;
+
+    // 击退（不能移动但能攻击）
     if (localPlayer.knockback) {
         localPlayer.knockbackTimer -= dt;
-        let moveX = localPlayer.knockbackDirX * localPlayer.knockbackSpeed * dt;
-        let moveY = localPlayer.knockbackDirY * localPlayer.knockbackSpeed * dt;
-        let newX = localPlayer.x + moveX;
-        let newY = localPlayer.y + moveY;
-        newX = Math.max(0, Math.min(CONFIG.MAP_SIZE - 1, newX));
-        newY = Math.max(0, Math.min(CONFIG.MAP_SIZE - 1, newY));
+        let mx = localPlayer.knockbackDirX * localPlayer.knockbackSpeed * dt;
+        let my = localPlayer.knockbackDirY * localPlayer.knockbackSpeed * dt;
+        let nx = localPlayer.x + mx;
+        let ny = localPlayer.y + my;
+        nx = Math.max(0, Math.min(CONFIG.MAP_SIZE - 1, nx));
+        ny = Math.max(0, Math.min(CONFIG.MAP_SIZE - 1, ny));
 
+        // 鱼不能到陆地
         if (gameState.myMonster === 'fish') {
-            let tx = Math.floor(newX), ty = Math.floor(newY);
-            if (!(gameState.map[ty] && gameState.map[ty][tx] === 1)) {
-                newX = localPlayer.x;
-                newY = localPlayer.y;
-            }
+            let tx = Math.floor(nx), ty = Math.floor(ny);
+            if (!(gameState.map[ty] && gameState.map[ty][tx] === 1)) { nx = localPlayer.x; ny = localPlayer.y; }
         }
+        localPlayer.x = nx; localPlayer.y = ny;
 
-        localPlayer.x = newX;
-        localPlayer.y = newY;
-
-        if (localPlayer.knockbackTimer <= 0) {
-            localPlayer.knockback = false;
-        }
+        if (localPlayer.knockbackTimer <= 0) localPlayer.knockback = false;
     }
 
-    // 正常移动
+    // 正常移动（击退期间不能自主移动，但攻击不影响移动）
     if (!localPlayer.knockback) {
         let moveX = 0, moveY = 0;
-
         if (input.keys['w'] || input.keys['arrowup']) moveY -= 1;
         if (input.keys['s'] || input.keys['arrowdown']) moveY += 1;
         if (input.keys['a'] || input.keys['arrowleft']) moveX -= 1;
@@ -997,35 +894,23 @@ function update(dt) {
 
         let mag = Math.sqrt(moveX * moveX + moveY * moveY);
         if (mag > 1) { moveX /= mag; moveY /= mag; }
-
-        if (mag > 0.1) {
-            localPlayer.facingAngle = Math.atan2(moveY, moveX);
-        }
+        if (mag > 0.1) localPlayer.facingAngle = Math.atan2(moveY, moveX);
 
         let speed = getMySpeed();
-        let tileX = Math.floor(localPlayer.x);
-        let tileY = Math.floor(localPlayer.y);
+        let tileX = Math.floor(localPlayer.x), tileY = Math.floor(localPlayer.y);
         localPlayer.inWater = gameState.map[tileY] && gameState.map[tileY][tileX] === 1;
+        if (localPlayer.inWater && gameState.myMonster !== 'fish') speed *= CONFIG.WATER_SLOW;
 
-        if (localPlayer.inWater && gameState.myMonster !== 'fish') {
-            speed *= CONFIG.WATER_SLOW;
-        }
-
-        let newX = localPlayer.x + moveX * speed * dt;
-        let newY = localPlayer.y + moveY * speed * dt;
-        newX = Math.max(0, Math.min(CONFIG.MAP_SIZE - 1, newX));
-        newY = Math.max(0, Math.min(CONFIG.MAP_SIZE - 1, newY));
+        let nx = localPlayer.x + moveX * speed * dt;
+        let ny = localPlayer.y + moveY * speed * dt;
+        nx = Math.max(0, Math.min(CONFIG.MAP_SIZE - 1, nx));
+        ny = Math.max(0, Math.min(CONFIG.MAP_SIZE - 1, ny));
 
         if (gameState.myMonster === 'fish') {
-            let ntx = Math.floor(newX), nty = Math.floor(newY);
-            if (!(gameState.map[nty] && gameState.map[nty][ntx] === 1)) {
-                newX = localPlayer.x;
-                newY = localPlayer.y;
-            }
+            let tx = Math.floor(nx), ty = Math.floor(ny);
+            if (!(gameState.map[ty] && gameState.map[ty][tx] === 1)) { nx = localPlayer.x; ny = localPlayer.y; }
         }
-
-        localPlayer.x = newX;
-        localPlayer.y = newY;
+        localPlayer.x = nx; localPlayer.y = ny;
     }
 
     // 冷却
@@ -1048,17 +933,16 @@ function update(dt) {
         }
     }
 
-    // 蓄力UI
+    // 弓蓄力条
     if (localPlayer.bowCharging) {
         let charge = (Date.now() - localPlayer.bowChargeStart) / 1000 / CONFIG.BOW_CHARGE_TIME;
         charge = Math.min(charge, 1);
-        document.getElementById('aim-charge-fill').style.width = (charge * 100) + '%';
+        document.getElementById('bow-charge-fill').style.width = (charge * 100) + '%';
     }
 
     checkSupply();
     checkPickup();
 
-    // 补给计时
     if (!gameState.supplyReady) {
         gameState.supplyTimer -= dt;
         if (gameState.supplyTimer <= 0) gameState.supplyReady = true;
@@ -1067,15 +951,11 @@ function update(dt) {
     updateProjectiles(dt);
     updateEffects(dt);
     updateTimer(dt);
+    interpolateEntities(dt);
 
-    // 网络同步
     syncTimer += dt;
-    if (syncTimer > 0.08) {
-        syncTimer = 0;
-        NetworkManager.syncPlayer();
-    }
+    if (syncTimer > 0.08) { syncTimer = 0; NetworkManager.syncPlayer(); }
 
-    // 水动画
     waterTimer += dt;
     if (waterTimer > 0.4) { waterTimer = 0; waterFrame++; }
 }
@@ -1085,49 +965,74 @@ function updateProjectiles(dt) {
         arrow.x += arrow.dirX * arrow.speed * dt;
         arrow.y += arrow.dirY * arrow.speed * dt;
         arrow.distTraveled += arrow.speed * dt;
-
         arrow.trail.push({x: arrow.x, y: arrow.y});
         if (arrow.trail.length > 20) arrow.trail.shift();
 
         if (arrow.distTraveled > CONFIG.BOW_RANGE) return false;
         if (arrow.x < 0 || arrow.x >= CONFIG.MAP_SIZE || arrow.y < 0 || arrow.y >= CONFIG.MAP_SIZE) return false;
 
-        // 碰撞（自己的箭才判定）
         if (arrow.owner === gameState.myId) {
             let entities = getAllEntities();
             for (let e of entities) {
                 if (arrow.ownerTeam === e.team) continue;
-                let d = distBetween(arrow.x, arrow.y, e.x, e.y);
-                if (d < 0.8) {
-                    let angle = Math.atan2(arrow.dirY, arrow.dirX);
-                    NetworkManager.sendDamage(e.id, arrow.damage, angle);
+                if (dist(arrow.x, arrow.y, e.x, e.y) < 0.8) {
+                    let a = Math.atan2(arrow.dirY, arrow.dirX);
+                    NetworkManager.sendDamage(e.id, arrow.damage, a);
                     gameState.effects.push({type: 'hit', x: arrow.x, y: arrow.y, timer: 0.15, maxTimer: 0.15});
                     return false;
                 }
             }
         }
-
         return true;
     });
 }
 
 function updateEffects(dt) {
-    gameState.effects = gameState.effects.filter(fx => {
-        fx.timer -= dt;
-        return fx.timer > 0;
-    });
+    gameState.effects = gameState.effects.filter(fx => { fx.timer -= dt; return fx.timer > 0; });
 }
 
 function updateTimer(dt) {
     gameState.timeLeft -= dt;
-    if (gameState.timeLeft <= 0) {
-        gameState.timeLeft = 0;
-        endGame('steve');
-    }
+    if (gameState.timeLeft <= 0) { gameState.timeLeft = 0; endGame('steve'); }
     let m = Math.floor(gameState.timeLeft / 60);
     let s = Math.floor(gameState.timeLeft % 60);
-    document.getElementById('timer').textContent =
-        m.toString().padStart(2, '0') + ':' + s.toString().padStart(2, '0');
+    document.getElementById('timer').textContent = m.toString().padStart(2, '0') + ':' + s.toString().padStart(2, '0');
+}
+
+// ===== AI平滑插值 =====
+function interpolateEntities(dt) {
+    let lerp = gameState.playerLerp;
+    let allRemote = Object.values(gameState.players).filter(p => p.id !== gameState.myId);
+
+    allRemote.forEach(p => {
+        if (!lerp[p.id]) lerp[p.id] = {x: p.x, y: p.y};
+        let l = lerp[p.id];
+        let speed = 12 * dt; // 插值速度
+        l.x += (p.x - l.x) * speed;
+        l.y += (p.y - l.y) * speed;
+    });
+
+    // AI怪物
+    gameState.aiMonsters.forEach(m => {
+        if (!lerp[m.id]) lerp[m.id] = {x: m.x, y: m.y};
+        let l = lerp[m.id];
+        l.x += (m.x - l.x) * 8 * dt;
+        l.y += (m.y - l.y) * 8 * dt;
+    });
+
+    // 鱼
+    (gameState.aiFish || []).forEach(f => {
+        if (!lerp[f.id]) lerp[f.id] = {x: f.x, y: f.y};
+        let l = lerp[f.id];
+        l.x += (f.x - l.x) * 8 * dt;
+        l.y += (f.y - l.y) * 8 * dt;
+    });
+}
+
+function getLerpPos(id, fallbackX, fallbackY) {
+    let l = gameState.playerLerp[id];
+    if (l) return {x: l.x, y: l.y};
+    return {x: fallbackX, y: fallbackY};
 }
 
 // ============ 渲染 ============
@@ -1142,129 +1047,104 @@ function render() {
 
     let tilesX = Math.ceil(screenW / viewTileSize) + 2;
     let tilesY = Math.ceil(screenH / viewTileSize) + 2;
-    let startX = Math.floor(camX);
-    let startY = Math.floor(camY);
+    let startX = Math.floor(camX), startY = Math.floor(camY);
 
     // 地图
     for (let dy = 0; dy < tilesY; dy++) {
         for (let dx = 0; dx < tilesX; dx++) {
-            let mx = startX + dx;
-            let my = startY + dy;
-            let sx = (mx - camX) * viewTileSize;
-            let sy = (my - camY) * viewTileSize;
+            let mx = startX + dx, my = startY + dy;
+            let sx = (mx - camX) * viewTileSize, sy = (my - camY) * viewTileSize;
             if (mx < 0 || mx >= CONFIG.MAP_SIZE || my < 0 || my >= CONFIG.MAP_SIZE) {
-                ctx.fillStyle = '#111';
-                ctx.fillRect(sx, sy, viewTileSize + 1, viewTileSize + 1);
+                ctx.fillStyle = '#111'; ctx.fillRect(sx, sy, viewTileSize + 1, viewTileSize + 1);
                 continue;
             }
-            let type = gameState.map[my][mx] === 1 ? 'water' : 'grass';
+            let tile = gameState.map[my][mx];
+            let type = tile === 1 ? 'water' : tile === 2 ? 'sand' : 'grass';
             Renderer.drawTile(ctx, type, sx, sy, viewTileSize + 1, waterFrame);
         }
     }
 
-    // 补给点（村庄房子）
+    // 补给点
     let center = CONFIG.MAP_SIZE / 2;
-    let houseSize = viewTileSize * 3;
-    let houseSX = (center - 1.5 - camX) * viewTileSize;
-    let houseSY = (center - 1.5 - camY) * viewTileSize;
-    if (Renderer.cache.villageHouse) {
-        ctx.drawImage(Renderer.cache.villageHouse, houseSX, houseSY, houseSize, houseSize);
-    }
-    // 补给倒计时文字
+    let hs = viewTileSize * 3;
+    let hsx = (center - 1.5 - camX) * viewTileSize, hsy = (center - 1.5 - camY) * viewTileSize;
+    if (Renderer.cache.villageHouse) ctx.drawImage(Renderer.cache.villageHouse, hsx, hsy, hs, hs);
     if (gameState.myTeam === 'steve') {
+        ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
         if (!gameState.supplyReady) {
             let tl = Math.ceil(gameState.supplyTimer);
-            let mm = Math.floor(tl / 60);
-            let ss = tl % 60;
-            ctx.fillStyle = 'rgba(0,0,0,0.6)';
-            ctx.fillRect(houseSX + houseSize / 2 - 22, houseSY - 16, 44, 14);
+            ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(hsx + hs / 2 - 22, hsy - 16, 44, 14);
             ctx.fillStyle = '#f39c12';
-            ctx.font = '10px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText(mm + ':' + ss.toString().padStart(2, '0'), houseSX + houseSize / 2, houseSY - 5);
+            ctx.fillText(Math.floor(tl / 60) + ':' + (tl % 60).toString().padStart(2, '0'), hsx + hs / 2, hsy - 5);
         } else {
             ctx.fillStyle = '#4ecca3';
-            ctx.font = '10px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText('可补给', houseSX + houseSize / 2, houseSY - 5);
+            ctx.fillText('可补给', hsx + hs / 2, hsy - 5);
         }
     }
 
-    // 掉落物箱子
+    // 掉落物
     gameState.droppedItems.forEach(item => {
         let sx = (item.x - camX) * viewTileSize - viewTileSize * 0.3;
         let sy = (item.y - camY) * viewTileSize - viewTileSize * 0.3;
         Renderer.drawEntity(ctx, 'chest', sx, sy, viewTileSize * 0.8);
     });
 
-    // 其他玩家
+    // 其他玩家（插值位置）
     Object.values(gameState.players).forEach(p => {
         if (p.id === gameState.myId || !p.alive) return;
-        let sx = (p.x - camX) * viewTileSize;
-        let sy = (p.y - camY) * viewTileSize;
+        let pos = getLerpPos(p.id, p.x, p.y);
+        let sx = (pos.x - camX) * viewTileSize, sy = (pos.y - camY) * viewTileSize;
         let sprite = p.team === 'steve' ? 'steve' : (p.monster || 'zombie');
         Renderer.drawEntity(ctx, sprite, sx, sy, viewTileSize);
 
-        if (p.team === 'steve') {
-            Renderer.drawHeldWeapon(ctx, sx, sy, viewTileSize, p.lastWeapon || 'sword', p.facingAngle || 0);
-        }
+        if (p.team === 'steve') Renderer.drawHeldWeapon(ctx, sx, sy, viewTileSize, p.lastWeapon || 'sword', p.facingAngle || 0);
 
         ctx.fillStyle = p.team === 'steve' ? '#4ecca3' : '#ff6b6b';
-        ctx.font = '10px sans-serif';
-        ctx.textAlign = 'center';
+        ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
         ctx.fillText(p.name || '', sx + viewTileSize / 2, sy - 5);
-
         drawEntityHP(ctx, sx, sy, viewTileSize, p.hp, p.maxHp);
     });
 
-    // AI怪物
+    // AI怪物（插值）
     gameState.aiMonsters.forEach(m => {
         if (!m.alive) return;
-        let sx = (m.x - camX) * viewTileSize;
-        let sy = (m.y - camY) * viewTileSize;
+        let pos = getLerpPos(m.id, m.x, m.y);
+        let sx = (pos.x - camX) * viewTileSize, sy = (pos.y - camY) * viewTileSize;
         Renderer.drawEntity(ctx, m.type, sx, sy, viewTileSize);
         drawEntityHP(ctx, sx, sy, viewTileSize, m.hp, m.maxHp);
     });
 
-    // 鱼群
-    (gameState.aiFish || []).forEach(fish => {
-        if (!fish.alive) return;
-        let sx = (fish.x - camX) * viewTileSize;
-        let sy = (fish.y - camY) * viewTileSize;
+    // 鱼（插值）
+    (gameState.aiFish || []).forEach(f => {
+        if (!f.alive) return;
+        let pos = getLerpPos(f.id, f.x, f.y);
+        let sx = (pos.x - camX) * viewTileSize, sy = (pos.y - camY) * viewTileSize;
         Renderer.drawEntity(ctx, 'fish', sx, sy, viewTileSize);
-        drawEntityHP(ctx, sx, sy, viewTileSize, fish.hp, fish.maxHp);
+        drawEntityHP(ctx, sx, sy, viewTileSize, f.hp, f.maxHp);
     });
 
-    // 飞行箭矢+轨迹
+    // 箭矢+轨迹
     gameState.projectiles.forEach(arrow => {
         Renderer.drawArrowTrail(ctx, arrow.trail, camX, camY, viewTileSize);
-        let sx = (arrow.x - camX) * viewTileSize;
-        let sy = (arrow.y - camY) * viewTileSize;
-        let arrowAngle = Math.atan2(arrow.dirY, arrow.dirX);
-        Renderer.drawArrow(ctx, sx, sy, viewTileSize, arrowAngle);
+        let sx = (arrow.x - camX) * viewTileSize, sy = (arrow.y - camY) * viewTileSize;
+        Renderer.drawArrow(ctx, sx, sy, viewTileSize, Math.atan2(arrow.dirY, arrow.dirX));
     });
 
     // 特效
     gameState.effects.forEach(fx => {
+        let sx = (fx.x - camX) * viewTileSize, sy = (fx.y - camY) * viewTileSize;
         if (fx.type === 'explosion') {
-            let sx = (fx.x - camX) * viewTileSize;
-            let sy = (fx.y - camY) * viewTileSize;
             let progress = 1 - fx.timer / fx.maxTimer;
-            let frameIdx = Math.min(4, Math.floor(progress * 5));
+            let fi = Math.min(4, Math.floor(progress * 5));
             let size = viewTileSize * 5 * (0.5 + progress * 0.5);
             ctx.globalAlpha = fx.timer / fx.maxTimer;
-            if (Renderer.cache.explosion && Renderer.cache.explosion[frameIdx]) {
-                ctx.drawImage(Renderer.cache.explosion[frameIdx], sx - size / 2, sy - size / 2, size, size);
-            }
+            if (Renderer.cache.explosion && Renderer.cache.explosion[fi])
+                ctx.drawImage(Renderer.cache.explosion[fi], sx - size / 2, sy - size / 2, size, size);
             ctx.globalAlpha = 1;
         } else if (fx.type === 'hit') {
-            let sx = (fx.x - camX) * viewTileSize;
-            let sy = (fx.y - camY) * viewTileSize;
             ctx.globalAlpha = fx.timer / fx.maxTimer;
-            ctx.fillStyle = '#FFFFFF';
-            ctx.beginPath();
-            ctx.arc(sx, sy, viewTileSize * 0.3, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.fillStyle = '#FFF';
+            ctx.beginPath(); ctx.arc(sx, sy, viewTileSize * 0.3, 0, Math.PI * 2); ctx.fill();
             ctx.globalAlpha = 1;
         }
     });
@@ -1276,15 +1156,12 @@ function render() {
         let sprite = gameState.myTeam === 'steve' ? 'steve' : (gameState.myMonster || 'zombie');
         Renderer.drawEntity(ctx, sprite, sx, sy, viewTileSize);
 
-        // 手持武器
-        if (gameState.myTeam === 'steve') {
+        if (gameState.myTeam === 'steve')
             Renderer.drawHeldWeapon(ctx, sx, sy, viewTileSize, localPlayer.lastWeapon, localPlayer.facingAngle);
-        }
 
         // 名字
         ctx.fillStyle = gameState.myTeam === 'steve' ? '#4ecca3' : '#ff6b6b';
-        ctx.font = '10px sans-serif';
-        ctx.textAlign = 'center';
+        ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
         ctx.fillText(gameState.myName, sx + viewTileSize / 2, sy - 5);
 
         // 刀光
@@ -1293,80 +1170,56 @@ function render() {
             Renderer.drawSlashEffect(ctx, sx, sy, viewTileSize, localPlayer.slashAngle, progress);
         }
 
-        // 蓄力指示
+        // 受击红闪
+        if (localPlayer.hitFlash > 0) {
+            let alpha = localPlayer.hitFlash / CONFIG.HIT_FLASH_TIME * 0.4;
+            Renderer.drawHitFlash(ctx, sx, sy, viewTileSize, alpha);
+        }
+
+        // 击退期间闪烁
+        if (localPlayer.knockback) {
+            ctx.globalAlpha = 0.6 + Math.sin(Date.now() * 0.03) * 0.3;
+            Renderer.drawHitFlash(ctx, sx, sy, viewTileSize, 0.15);
+            ctx.globalAlpha = 1;
+        }
+
+        // 弓瞄准虚线
         if (localPlayer.bowCharging) {
-            let charge = (Date.now() - localPlayer.bowChargeStart) / 1000 / CONFIG.BOW_CHARGE_TIME;
-            charge = Math.min(charge, 1);
-            ctx.strokeStyle = `rgba(52,152,219,${0.5 + charge * 0.5})`;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(sx + viewTileSize / 2, sy + viewTileSize / 2, viewTileSize * 0.8, 0, Math.PI * 2 * charge);
-            ctx.stroke();
-            // 瞄准线
-            let aimLen = viewTileSize * 2;
+            let aimLen = viewTileSize * 3;
             let ax = Math.cos(localPlayer.aimAngle) * aimLen;
             let ay = Math.sin(localPlayer.aimAngle) * aimLen;
-            ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-            ctx.setLineDash([3, 3]);
+            ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+            ctx.setLineDash([4, 4]);
+            ctx.lineWidth = 1.5;
             ctx.beginPath();
             ctx.moveTo(sx + viewTileSize / 2, sy + viewTileSize / 2);
             ctx.lineTo(sx + viewTileSize / 2 + ax, sy + viewTileSize / 2 + ay);
             ctx.stroke();
             ctx.setLineDash([]);
         }
-
-        // 击退闪烁
-        if (localPlayer.knockback) {
-            ctx.globalAlpha = 0.5 + Math.sin(Date.now() * 0.02) * 0.3;
-            ctx.fillStyle = 'rgba(255,0,0,0.2)';
-            ctx.fillRect(sx, sy, viewTileSize, viewTileSize);
-            ctx.globalAlpha = 1;
-        }
     }
 }
 
 function drawEntityHP(ctx, sx, sy, size, hp, maxHp) {
     if (hp >= maxHp) return;
-    let barW = size;
-    let barH = 3;
-    let barY = sy - 3;
-    let ratio = hp / maxHp;
-    ctx.fillStyle = '#333';
-    ctx.fillRect(sx, barY, barW, barH);
-    ctx.fillStyle = ratio > 0.5 ? '#4ecca3' : ratio > 0.25 ? '#f39c12' : '#e74c3c';
-    ctx.fillRect(sx, barY, barW * ratio, barH);
+    let r = hp / maxHp;
+    ctx.fillStyle = '#333'; ctx.fillRect(sx, sy - 3, size, 3);
+    ctx.fillStyle = r > 0.5 ? '#4ecca3' : r > 0.25 ? '#f39c12' : '#e74c3c';
+    ctx.fillRect(sx, sy - 3, size * r, 3);
 }
 
 // ============ 小地图 ============
 
 function renderMinimap() {
-    let localData = {
-        x: localPlayer.x,
-        y: localPlayer.y,
-        id: gameState.myId,
-        team: gameState.myTeam,
-    };
-
-    // 合并AI怪物和鱼群给小地图显示
+    let local = {x: localPlayer.x, y: localPlayer.y, id: gameState.myId, team: gameState.myTeam};
     let allAI = (gameState.aiMonsters || []).concat(gameState.aiFish || []);
-
-    Renderer.drawMinimap(
-        minimapCtx,
-        gameState.map,
-        localData,
-        gameState.players,
-        allAI,
-        gameState.droppedItems,
-        CONFIG.MAP_SIZE,
-        CONFIG.MINIMAP_RANGE
-    );
+    Renderer.drawMinimap(minimapCtx, gameState.map, local, gameState.players, allAI, gameState.droppedItems, CONFIG.MAP_SIZE, CONFIG.MINIMAP_RANGE);
 }
 
 // ============ HUD ============
 
 function updateHUD() {
     updateHearts();
-
     if (gameState.myTeam === 'steve') {
         document.getElementById('weapon-info').textContent =
             `🗡️ 耐久:${localPlayer.swordDurability} | 🏹 箭:${localPlayer.arrows} | 🧪 药水:${localPlayer.potions}`;
@@ -1383,44 +1236,30 @@ function updateHUD() {
 function endGame(winner) {
     if (gameState.phase === 'ended') return;
     gameState.phase = 'ended';
-
-    let resultScreen = document.getElementById('result-screen');
-    let resultText = document.getElementById('result-text');
-    let resultDetail = document.getElementById('result-detail');
-    resultScreen.style.display = 'flex';
+    let rs = document.getElementById('result-screen');
+    let rt = document.getElementById('result-text');
+    let rd = document.getElementById('result-detail');
+    rs.style.display = 'flex';
 
     if (winner === 'steve') {
-        if (gameState.myTeam === 'steve') {
-            resultText.className = 'win';
-            resultText.textContent = '🎉 胜利！';
-            resultDetail.textContent = '史蒂夫成功存活30分钟！';
-        } else {
-            resultText.className = 'lose';
-            resultText.textContent = '💀 失败...';
-            resultDetail.textContent = '未能在30分钟内消灭史蒂夫';
-        }
+        rt.className = gameState.myTeam === 'steve' ? 'win' : 'lose';
+        rt.textContent = gameState.myTeam === 'steve' ? '🎉 胜利！' : '💀 失败...';
+        rd.textContent = gameState.myTeam === 'steve' ? '成功存活30分钟！' : '未能消灭史蒂夫';
     } else {
-        if (gameState.myTeam === 'monster') {
-            resultText.className = 'win';
-            resultText.textContent = '🎉 胜利！';
-            resultDetail.textContent = '成功消灭了所有史蒂夫！';
-        } else {
-            resultText.className = 'lose';
-            resultText.textContent = '💀 失败...';
-            resultDetail.textContent = '所有史蒂夫被消灭了...';
-        }
+        rt.className = gameState.myTeam === 'monster' ? 'win' : 'lose';
+        rt.textContent = gameState.myTeam === 'monster' ? '🎉 胜利！' : '💀 失败...';
+        rd.textContent = gameState.myTeam === 'monster' ? '消灭了所有史蒂夫！' : '所有史蒂夫被消灭了...';
     }
-
     NetworkManager.sendGameOver(winner);
 }
 
 function checkGameOver() {
-    let stevesAlive = 0;
+    let alive = 0;
     Object.values(gameState.players).forEach(p => {
-        if (p.team === 'steve' && (p.lives > 0 || p.alive) && !p.permaDead) stevesAlive++;
+        if (p.team === 'steve' && (p.lives > 0 || p.alive) && !p.permaDead) alive++;
     });
-    if (gameState.myTeam === 'steve' && localPlayer.lives > 0) stevesAlive++;
-    if (stevesAlive === 0) endGame('monster');
+    if (gameState.myTeam === 'steve' && localPlayer.lives > 0) alive++;
+    if (alive === 0) endGame('monster');
 }
 
 // ============ 进入游戏 ============
@@ -1433,6 +1272,20 @@ function enterGame(seed, timeLeft) {
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('game-screen').style.display = 'block';
 
+    // 根据阵营显示/隐藏按钮
+    if (gameState.myTeam === 'steve') {
+        document.getElementById('attack-btn').style.display = 'flex';
+        document.getElementById('bow-btn').style.display = 'flex';
+        document.getElementById('potion-btn').style.display = 'flex';
+        document.getElementById('monster-attack-btn').style.display = 'none';
+    } else {
+        document.getElementById('attack-btn').style.display = 'none';
+        document.getElementById('bow-btn').style.display = 'none';
+        document.getElementById('potion-btn').style.display = 'none';
+        document.getElementById('monster-attack-btn').style.display = 'flex';
+    }
+
+    // 初始位置
     if (gameState.myTeam === 'steve') {
         localPlayer.x = CONFIG.MAP_SIZE / 2;
         localPlayer.y = CONFIG.MAP_SIZE / 2;
@@ -1451,4 +1304,3 @@ function enterGame(seed, timeLeft) {
 
 // ===== 启动 =====
 document.addEventListener('DOMContentLoaded', initGame);
-
