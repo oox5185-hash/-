@@ -1,30 +1,51 @@
 // ============ 游戏核心逻辑 ============
 
-// 游戏常量
-const GAME_CONFIG = {
+// ===== 常量配置 =====
+const CONFIG = {
     MAP_SIZE: 500,
     TILE_SIZE: 16,
-    MOVE_SPEED: 5, // 格/秒
-    WATER_SLOW: 0.4, // 水中速度倍率（减速60%）
-    GAME_DURATION: 30 * 60, // 30分钟（秒）
+    GAME_DURATION: 30 * 60,
     MAX_PLAYERS: 30,
     MAX_STEVE: 3,
+
+    // 速度（格/秒）
+    STEVE_SPEED: 5,
+    ZOMBIE_SPEED: 6,
+    SKELETON_SPEED: 6,
+    CREEPER_SPEED: 6,
+    FISH_SPEED: 10,
+    WATER_SLOW: 0.3,
+
+    // 史蒂夫
     STEVE_HP: 20,
     STEVE_LIVES: 3,
-    STEVE_REGEN: 10, // 每10秒回1血
-    STEVE_ARMOR: 0.2, // 20%减伤
+    STEVE_ARMOR: 0.2,
+    STEVE_REGEN_INTERVAL: 10,
+
+    // 铁剑
     SWORD_DAMAGE: 6,
     SWORD_DURABILITY: 200,
     SWORD_RANGE: 3,
     SWORD_COOLDOWN: 0.6,
+    SLASH_ANGLE: Math.PI / 3,
+
+    // 弓箭
     BOW_DAMAGE_MIN: 2,
     BOW_DAMAGE_MAX: 8,
     BOW_RANGE: 30,
     BOW_CHARGE_TIME: 1,
     BOW_COOLDOWN: 0.2,
+    ARROW_SPEED: 20,
     MAX_ARROWS: 64,
+
+    // 药水
     POTION_HEAL: 4,
-    SUPPLY_COOLDOWN: 300, // 5分钟
+
+    // 补给
+    SUPPLY_COOLDOWN: 300,
+    SUPPLY_RANGE: 3,
+
+    // 怪物
     ZOMBIE_HP: 20,
     ZOMBIE_DAMAGE: 4,
     ZOMBIE_RANGE: 3,
@@ -33,40 +54,47 @@ const GAME_CONFIG = {
     SKELETON_RANGE: 30,
     CREEPER_HP: 20,
     FISH_HP: 10,
-    FISH_DAMAGE: 5,
+    FISH_DAMAGE: 10,
     FISH_RANGE: 3,
-    MONSTER_RESPAWN: 5, // 5秒复活
-    AI_SPAWN_RATE: 60, // 每60秒刷5个AI
-    AI_SPAWN_COUNT: 5,
+
+    // 击退
+    KNOCKBACK_DIST: 1.5,
+    KNOCKBACK_TIME: 0.2,
+
+    // 复活
+    MONSTER_RESPAWN: 5,
+
+    // 小地图
+    MINIMAP_RANGE: 60,
 };
 
-// 苦力怕爆炸伤害表
-const CREEPER_DAMAGE = {1: 20, 2: 15, 3: 8, 4: 3, 5: 1};
+const CREEPER_DMG = {1: 20, 2: 15, 3: 8, 4: 3, 5: 1};
 
-// 游戏状态
+// ===== 游戏状态 =====
 let gameState = {
-    phase: 'login', // login, waiting, playing, ended
+    phase: 'login',
     myId: null,
     myTeam: null,
     myMonster: null,
-    myName: '',
+    myName: '鼠鼠',
     roomId: null,
     map: [],
     players: {},
     projectiles: [],
     aiMonsters: [],
+    aiFish: [],
     effects: [],
-    timeLeft: GAME_CONFIG.GAME_DURATION,
+    droppedItems: [],
+    timeLeft: CONFIG.GAME_DURATION,
     camera: {x: 0, y: 0},
-    lastSupplyTime: 0,
+    supplyTimer: 0,
+    supplyReady: true,
 };
 
-// 本地玩家状态
+// ===== 本地玩家 =====
 let localPlayer = {
-    x: 250,
-    y: 250,
-    hp: 20,
-    maxHp: 20,
+    x: 250, y: 250,
+    hp: 20, maxHp: 20,
     lives: 3,
     arrows: 64,
     potions: 1,
@@ -78,49 +106,107 @@ let localPlayer = {
     bowCharging: false,
     bowChargeStart: 0,
     regenTimer: 0,
-    moveDir: {x: 0, y: 0},
     inWater: false,
-    droppedItems: [],
+    knockback: false,
+    knockbackTimer: 0,
+    knockbackDirX: 0,
+    knockbackDirY: 0,
+    knockbackSpeed: 0,
+    lastWeapon: 'sword',
+    slashActive: false,
+    slashTimer: 0,
+    slashAngle: 0,
+    aimAngle: 0,
+    facingAngle: 0,
 };
 
-// 输入状态
+// ===== 输入 =====
 let input = {
     keys: {},
     joystickDir: {x: 0, y: 0},
     joystickActive: false,
+    aimDir: {x: 0, y: 0},
+    aimActive: false,
 };
 
-// Canvas 相关
-let canvas, ctx;
-let screenWidth, screenHeight;
-let viewTileSize; // 实际渲染的每格像素大小
-let waterFrame = 0;
-let waterAnimTimer = 0;
+// ===== Canvas变量 =====
+let canvas, ctx, minimapCanvas, minimapCtx;
+let screenW, screenH;
+let viewTileSize;
+let waterFrame = 0, waterTimer = 0;
+let lastTime = 0;
+let syncTimer = 0;
 
-// ============ 地图生成 ============
+// ============ 地图生成（大河流）============
 
 function generateMap(seed) {
     const map = [];
-    // 使用简单的Perlin-like噪声生成地图
-    // seed确保所有玩家生成相同地图
-    const random = seededRandom(seed);
-
-    for (let y = 0; y < GAME_CONFIG.MAP_SIZE; y++) {
+    for (let y = 0; y < CONFIG.MAP_SIZE; y++) {
         map[y] = [];
-        for (let x = 0; x < GAME_CONFIG.MAP_SIZE; x++) {
-            // 简单噪声：生成水域约50%
-            let noise = simplexNoise(x * 0.05, y * 0.05, seed);
-            map[y][x] = noise > 0 ? 0 : 1; // 0=草地, 1=水
+        for (let x = 0; x < CONFIG.MAP_SIZE; x++) {
+            map[y][x] = 0;
         }
     }
 
-    // 确保中心点是草地（复活点/补给点）
-    for (let dy = -3; dy <= 3; dy++) {
-        for (let dx = -3; dx <= 3; dx++) {
-            let cx = 250 + dx;
-            let cy = 250 + dy;
-            if (cx >= 0 && cx < 500 && cy >= 0 && cy < 500) {
-                map[cy][cx] = 0;
+    const rng = seededRNG(seed);
+    let totalWater = 0;
+    let targetWater = CONFIG.MAP_SIZE * CONFIG.MAP_SIZE * 0.5;
+
+    // 生成3~5条主河流
+    let riverCount = 3 + Math.floor(rng() * 3);
+    for (let r = 0; r < riverCount; r++) {
+        let river = generateRiver(rng, CONFIG.MAP_SIZE);
+        for (let point of river) {
+            let cx = Math.floor(point.x);
+            let cy = Math.floor(point.y);
+            let width = Math.floor(point.w);
+            for (let dy = -width; dy <= width; dy++) {
+                for (let dx = -width; dx <= width; dx++) {
+                    let mx = cx + dx;
+                    let my = cy + dy;
+                    if (mx >= 0 && mx < CONFIG.MAP_SIZE && my >= 0 && my < CONFIG.MAP_SIZE) {
+                        if (dx * dx + dy * dy <= width * width && map[my][mx] === 0) {
+                            map[my][mx] = 1;
+                            totalWater++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 补充水域到50%
+    let attempts = 0;
+    while (totalWater < targetWater && attempts < 20) {
+        let river = generateRiver(rng, CONFIG.MAP_SIZE);
+        for (let point of river) {
+            let cx = Math.floor(point.x);
+            let cy = Math.floor(point.y);
+            let width = Math.floor(point.w);
+            for (let dy = -width; dy <= width; dy++) {
+                for (let dx = -width; dx <= width; dx++) {
+                    let mx = cx + dx;
+                    let my = cy + dy;
+                    if (mx >= 0 && mx < CONFIG.MAP_SIZE && my >= 0 && my < CONFIG.MAP_SIZE) {
+                        if (dx * dx + dy * dy <= width * width && map[my][mx] === 0) {
+                            map[my][mx] = 1;
+                            totalWater++;
+                        }
+                    }
+                }
+            }
+        }
+        attempts++;
+    }
+
+    // 中心区域保证是陆地
+    let center = Math.floor(CONFIG.MAP_SIZE / 2);
+    for (let dy = -5; dy <= 5; dy++) {
+        for (let dx = -5; dx <= 5; dx++) {
+            let mx = center + dx;
+            let my = center + dy;
+            if (mx >= 0 && mx < CONFIG.MAP_SIZE && my >= 0 && my < CONFIG.MAP_SIZE) {
+                map[my][mx] = 0;
             }
         }
     }
@@ -128,87 +214,165 @@ function generateMap(seed) {
     return map;
 }
 
-// 种子随机数
-function seededRandom(seed) {
-    let s = seed;
+function generateRiver(rng, mapSize) {
+    let points = [];
+    let side = Math.floor(rng() * 4);
+    let sx, sy, baseAngle;
+
+    switch (side) {
+        case 0: sx = 0; sy = rng() * mapSize; baseAngle = 0; break;
+        case 1: sx = mapSize; sy = rng() * mapSize; baseAngle = Math.PI; break;
+        case 2: sx = rng() * mapSize; sy = 0; baseAngle = Math.PI / 2; break;
+        case 3: sx = rng() * mapSize; sy = mapSize; baseAngle = -Math.PI / 2; break;
+    }
+
+    let x = sx, y = sy;
+    let angle = baseAngle + (rng() - 0.5) * 0.5;
+    let width = 8 + rng() * 15;
+
+    let steps = 200 + Math.floor(rng() * 300);
+    for (let i = 0; i < steps; i++) {
+        points.push({x: x, y: y, w: width});
+        angle += (rng() - 0.5) * 0.15;
+        width += (rng() - 0.5) * 1.5;
+        width = Math.max(8, Math.min(30, width));
+        x += Math.cos(angle) * 3;
+        y += Math.sin(angle) * 3;
+        if (x < -20 || x > mapSize + 20 || y < -20 || y > mapSize + 20) break;
+    }
+    return points;
+}
+
+function seededRNG(seed) {
+    let s = seed || 12345;
     return function() {
-        s = (s * 9301 + 49297) % 233280;
-        return s / 233280;
+        s = (s * 1664525 + 1013904223) & 0xFFFFFFFF;
+        return (s >>> 0) / 4294967296;
     };
 }
 
-// 简易噪声函数
-function simplexNoise(x, y, seed) {
-    let n = Math.sin(x * 12.9898 + y * 78.233 + seed) * 43758.5453;
-    n = n - Math.floor(n);
-    // 加入多层噪声使地图更自然
-    let n2 = Math.sin(x * 5.123 + y * 3.456 + seed * 2) * 12345.6789;
-    n2 = n2 - Math.floor(n2);
-    let n3 = Math.sin(x * 25.789 + y * 15.432 + seed * 3) * 67890.1234;
-    n3 = n3 - Math.floor(n3);
+// ===== 工具函数 =====
 
-    let combined = (n * 0.5 + n2 * 0.3 + n3 * 0.2) - 0.5;
-    return combined;
+function getRandomLandPos() {
+    let x, y, attempts = 0;
+    do {
+        x = Math.floor(Math.random() * CONFIG.MAP_SIZE);
+        y = Math.floor(Math.random() * CONFIG.MAP_SIZE);
+        attempts++;
+    } while (gameState.map[y] && gameState.map[y][x] === 1 && attempts < 1000);
+    return {x, y};
 }
 
-// ============ 游戏初始化 ============
+function getRandomWaterPos() {
+    let x, y, attempts = 0;
+    do {
+        x = Math.floor(Math.random() * CONFIG.MAP_SIZE);
+        y = Math.floor(Math.random() * CONFIG.MAP_SIZE);
+        attempts++;
+    } while (gameState.map[y] && gameState.map[y][x] === 0 && attempts < 1000);
+    return {x, y};
+}
+
+function distBetween(x1, y1, x2, y2) {
+    return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+}
+
+function angleBetween(x1, y1, x2, y2) {
+    return Math.atan2(y2 - y1, x2 - x1);
+}
+
+function getMySpeed() {
+    if (gameState.myTeam === 'steve') return CONFIG.STEVE_SPEED;
+    switch (gameState.myMonster) {
+        case 'zombie': return CONFIG.ZOMBIE_SPEED;
+        case 'skeleton': return CONFIG.SKELETON_SPEED;
+        case 'creeper': return CONFIG.CREEPER_SPEED;
+        case 'fish': return CONFIG.FISH_SPEED;
+        default: return 5;
+    }
+}
+
+// ============ 初始化 ============
 
 function initGame() {
     canvas = document.getElementById('game-canvas');
     ctx = canvas.getContext('2d');
+    minimapCanvas = document.getElementById('minimap-canvas');
+    minimapCtx = minimapCanvas.getContext('2d');
 
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
 
-    // 初始化贴图
     Renderer.init();
-    Renderer.createExplosion();
-
-    // 初始化登录界面图标
     drawLoginIcons();
-
-    // 输入事件
     setupInput();
+    setupHearts();
 
-    // 游戏循环
+    document.getElementById('name-input').addEventListener('input', checkJoinBtn);
+    checkJoinBtn();
+
     requestAnimationFrame(gameLoop);
 }
 
 function resizeCanvas() {
-    screenWidth = window.innerWidth;
-    screenHeight = window.innerHeight;
-    canvas.width = screenWidth;
-    canvas.height = screenHeight;
-
-    // 手机上0.5cm约等于19px，PC上我们适配屏幕
-    // 设计让屏幕能看到约30x20格
-    viewTileSize = Math.floor(Math.min(screenWidth / 30, screenHeight / 20));
+    screenW = window.innerWidth;
+    screenH = window.innerHeight;
+    canvas.width = screenW;
+    canvas.height = screenH;
+    viewTileSize = Math.floor(Math.min(screenW / 28, screenH / 18));
     if (viewTileSize < 16) viewTileSize = 16;
 }
 
 function drawLoginIcons() {
-    // 画史蒂夫图标
-    let c = document.getElementById('steve-icon');
-    let cctx = c.getContext('2d');
-    cctx.imageSmoothingEnabled = false;
-    cctx.drawImage(Renderer.cache.steve, 0, 0, 16, 16, 15, 5, 50, 50);
-
-    // 画怪物图标
-    c = document.getElementById('monster-icon');
-    cctx = c.getContext('2d');
-    cctx.imageSmoothingEnabled = false;
-    cctx.drawImage(Renderer.cache.creeper, 0, 0, 16, 16, 15, 5, 50, 50);
-
-    // 怪物选择图标
-    let icons = ['zombie', 'skeleton', 'creeper', 'fish'];
-    icons.forEach(name => {
-        c = document.getElementById(name + '-icon');
-        if (c) {
-            cctx = c.getContext('2d');
-            cctx.imageSmoothingEnabled = false;
-            cctx.drawImage(Renderer.cache[name], 0, 0, 16, 16, 10, 5, 40, 40);
+    let pairs = [
+        ['steve-icon', 'steve', 45],
+        ['monster-icon', 'creeper', 45],
+        ['zombie-icon', 'zombie', 35],
+        ['skeleton-icon', 'skeleton', 35],
+        ['creeper-icon', 'creeper', 35],
+        ['fish-icon', 'fish', 35],
+    ];
+    pairs.forEach(([id, type, size]) => {
+        let el = document.getElementById(id);
+        if (el && Renderer.cache[type]) {
+            let c = el.getContext('2d');
+            c.imageSmoothingEnabled = false;
+            let offset = (el.width - size) / 2;
+            c.drawImage(Renderer.cache[type], offset, offset, size, size);
         }
     });
+}
+
+function setupHearts() {
+    let container = document.getElementById('hearts-container');
+    container.innerHTML = '';
+    for (let i = 0; i < 10; i++) {
+        let heart = document.createElement('canvas');
+        heart.width = 13;
+        heart.height = 13;
+        heart.className = 'heart';
+        heart.id = 'heart-' + i;
+        container.appendChild(heart);
+    }
+    updateHearts();
+}
+
+function updateHearts() {
+    for (let i = 0; i < 10; i++) {
+        let heartCanvas = document.getElementById('heart-' + i);
+        if (!heartCanvas) continue;
+        let hctx = heartCanvas.getContext('2d');
+        hctx.clearRect(0, 0, 13, 13);
+        hctx.imageSmoothingEnabled = false;
+
+        let heartHp = localPlayer.hp - i * 2;
+        let img;
+        if (heartHp >= 2) img = Renderer.cache.heartFull;
+        else if (heartHp === 1) img = Renderer.cache.heartHalf;
+        else img = Renderer.cache.heartEmpty;
+
+        if (img) hctx.drawImage(img, 0, 0, 13, 13);
+    }
 }
 
 // ============ 界面逻辑 ============
@@ -220,183 +384,260 @@ function selectTeam(team) {
     selectedTeam = team;
     document.getElementById('btn-steve').classList.toggle('selected', team === 'steve');
     document.getElementById('btn-monster').classList.toggle('selected', team === 'monster');
-
-    if (team === 'monster') {
-        document.getElementById('monster-select').classList.add('show');
-    } else {
-        document.getElementById('monster-select').classList.remove('show');
-        selectedMonster = null;
-    }
-
-    checkJoinButton();
+    document.getElementById('monster-select').classList.toggle('show', team === 'monster');
+    if (team === 'steve') selectedMonster = null;
+    checkJoinBtn();
 }
 
 function selectMonster(monster) {
     selectedMonster = monster;
-    document.querySelectorAll('.monster-btn').forEach(btn => btn.classList.remove('selected'));
+    document.querySelectorAll('.monster-btn').forEach(b => b.classList.remove('selected'));
     event.currentTarget.classList.add('selected');
-    checkJoinButton();
+    checkJoinBtn();
 }
 
-function checkJoinButton() {
-    const nameInput = document.getElementById('name-input');
-    const canJoin = selectedTeam && (selectedTeam === 'steve' || selectedMonster) && nameInput.value.trim();
+function checkJoinBtn() {
+    let name = document.getElementById('name-input').value.trim();
+    let canJoin = selectedTeam && (selectedTeam === 'steve' || selectedMonster) && name;
     document.getElementById('join-btn').disabled = !canJoin;
 }
 
-// 监听名字输入
-document.addEventListener('DOMContentLoaded', () => {
-    initGame();
-    document.getElementById('name-input').addEventListener('input', checkJoinButton);
-});
+function joinGame() {
+    let name = document.getElementById('name-input').value.trim() || '鼠鼠';
+    gameState.myTeam = selectedTeam;
+    gameState.myMonster = selectedMonster;
+    gameState.myName = name;
+
+    if (selectedTeam === 'steve') {
+        localPlayer.maxHp = CONFIG.STEVE_HP;
+        localPlayer.hp = CONFIG.STEVE_HP;
+        localPlayer.lives = CONFIG.STEVE_LIVES;
+        localPlayer.arrows = CONFIG.MAX_ARROWS;
+        localPlayer.swordDurability = CONFIG.SWORD_DURABILITY;
+        localPlayer.potions = 1;
+    } else {
+        switch (selectedMonster) {
+            case 'fish':
+                localPlayer.maxHp = CONFIG.FISH_HP;
+                localPlayer.hp = CONFIG.FISH_HP;
+                break;
+            default:
+                localPlayer.maxHp = 20;
+                localPlayer.hp = 20;
+        }
+        localPlayer.lives = 999;
+    }
+
+    NetworkManager.autoJoin({
+        name: name,
+        team: selectedTeam,
+        monster: selectedMonster,
+    });
+}
 
 // ============ 输入处理 ============
 
 function setupInput() {
-    // 键盘
     window.addEventListener('keydown', e => {
         input.keys[e.key.toLowerCase()] = true;
-    });
-    window.addEventListener('keyup', e => {
-        input.keys[e.key.toLowerCase()] = false;
-    });
-
-    // 虚拟摇杆
-    const joystickBase = document.getElementById('joystick-base');
-    const joystickStick = document.getElementById('joystick-stick');
-    let joystickTouch = null;
-
-    joystickBase.addEventListener('touchstart', e => {
-        e.preventDefault();
-        joystickTouch = e.touches[0];
-        input.joystickActive = true;
-    });
-
-    document.addEventListener('touchmove', e => {
-        if (!input.joystickActive) return;
-        const touch = Array.from(e.touches).find(t => t.identifier === joystickTouch?.identifier) || e.touches[0];
-        const rect = joystickBase.getBoundingClientRect();
-        const centerX = rect.left + rect.width / 2;
-        const centerY = rect.top + rect.height / 2;
-        let dx = touch.clientX - centerX;
-        let dy = touch.clientY - centerY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        const maxDist = 50;
-
-        if (dist > maxDist) {
-            dx = (dx / dist) * maxDist;
-            dy = (dy / dist) * maxDist;
-        }
-
-        joystickStick.style.transform = `translate(${dx - 25}px, ${dy - 25}px)`;
-        input.joystickDir = {x: dx / maxDist, y: dy / maxDist};
-    });
-
-    document.addEventListener('touchend', e => {
-        if (e.touches.length === 0) {
-            input.joystickActive = false;
-            input.joystickDir = {x: 0, y: 0};
-            joystickStick.style.transform = 'translate(-50%, -50%)';
-        }
-    });
-
-    // 攻击按钮
-    document.getElementById('attack-btn').addEventListener('touchstart', e => {
-        e.preventDefault();
-        attackSword();
-    });
-    document.getElementById('attack-btn').addEventListener('mousedown', e => {
-        attackSword();
-    });
-
-    // 弓箭按钮
-    document.getElementById('bow-btn').addEventListener('touchstart', e => {
-        e.preventDefault();
-        startBowCharge();
-    });
-    document.getElementById('bow-btn').addEventListener('mousedown', e => {
-        startBowCharge();
-    });
-    document.getElementById('bow-btn').addEventListener('touchend', e => {
-        releaseBow();
-    });
-    document.getElementById('bow-btn').addEventListener('mouseup', e => {
-        releaseBow();
-    });
-
-    // 药水按钮
-    document.getElementById('potion-btn').addEventListener('touchstart', e => {
-        e.preventDefault();
-        usePotion();
-    });
-    document.getElementById('potion-btn').addEventListener('mousedown', e => {
-        usePotion();
-    });
-
-    // 键盘攻击（PC端）
-    window.addEventListener('keydown', e => {
         if (gameState.phase !== 'playing') return;
         if (e.key === 'j' || e.key === 'J') attackSword();
         if (e.key === 'k' || e.key === 'K') startBowCharge();
         if (e.key === 'l' || e.key === 'L') usePotion();
     });
     window.addEventListener('keyup', e => {
+        input.keys[e.key.toLowerCase()] = false;
         if (e.key === 'k' || e.key === 'K') releaseBow();
     });
+
+    window.addEventListener('mousemove', e => {
+        if (!localPlayer.bowCharging) return;
+        let cx = screenW / 2;
+        let cy = screenH / 2;
+        let dx = e.clientX - cx;
+        let dy = e.clientY - cy;
+        let dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 0) {
+            input.aimDir = {x: dx / dist, y: dy / dist};
+            localPlayer.aimAngle = Math.atan2(dy, dx);
+        }
+    });
+
+    setupJoystick();
+
+    let atkBtn = document.getElementById('attack-btn');
+    atkBtn.addEventListener('touchstart', e => { e.preventDefault(); attackSword(); });
+    atkBtn.addEventListener('mousedown', e => { e.preventDefault(); attackSword(); });
+
+    let bowBtn = document.getElementById('bow-btn');
+    bowBtn.addEventListener('touchstart', e => { e.preventDefault(); startBowCharge(); showAimJoystick(); });
+    bowBtn.addEventListener('mousedown', e => { e.preventDefault(); startBowCharge(); });
+    bowBtn.addEventListener('touchend', e => { releaseBow(); hideAimJoystick(); });
+    bowBtn.addEventListener('mouseup', e => { releaseBow(); });
+
+    let potBtn = document.getElementById('potion-btn');
+    potBtn.addEventListener('touchstart', e => { e.preventDefault(); usePotion(); });
+    potBtn.addEventListener('mousedown', e => { e.preventDefault(); usePotion(); });
+
+    setupAimJoystick();
+}
+
+function setupJoystick() {
+    const base = document.getElementById('joystick-base');
+    const stick = document.getElementById('joystick-stick');
+    let touching = false;
+    let baseRect;
+
+    function handleStart(e) {
+        e.preventDefault();
+        touching = true;
+        input.joystickActive = true;
+        baseRect = base.getBoundingClientRect();
+    }
+    function handleMove(e) {
+        if (!touching) return;
+        let clientX, clientY;
+        if (e.touches) { clientX = e.touches[0].clientX; clientY = e.touches[0].clientY; }
+        else { clientX = e.clientX; clientY = e.clientY; }
+        let centerX = baseRect.left + baseRect.width / 2;
+        let centerY = baseRect.top + baseRect.height / 2;
+        let dx = clientX - centerX;
+        let dy = clientY - centerY;
+        let dist = Math.sqrt(dx * dx + dy * dy);
+        let maxDist = baseRect.width / 2 - 20;
+        if (dist > maxDist) { dx = (dx / dist) * maxDist; dy = (dy / dist) * maxDist; }
+        stick.style.left = (50 + (dx / baseRect.width) * 100) + '%';
+        stick.style.top = (50 + (dy / baseRect.height) * 100) + '%';
+        input.joystickDir = {x: dx / maxDist, y: dy / maxDist};
+    }
+    function handleEnd() {
+        touching = false;
+        input.joystickActive = false;
+        input.joystickDir = {x: 0, y: 0};
+        stick.style.left = '50%';
+        stick.style.top = '50%';
+    }
+
+    base.addEventListener('touchstart', handleStart);
+    base.addEventListener('mousedown', handleStart);
+    document.addEventListener('touchmove', e => { if (touching) handleMove(e); });
+    document.addEventListener('mousemove', e => { if (touching) handleMove(e); });
+    document.addEventListener('touchend', handleEnd);
+    document.addEventListener('mouseup', handleEnd);
+}
+
+function setupAimJoystick() {
+    const base = document.getElementById('aim-base');
+    const stick = document.getElementById('aim-stick');
+    let touching = false;
+    let baseRect;
+
+    function handleStart(e) {
+        e.preventDefault();
+        touching = true;
+        input.aimActive = true;
+        baseRect = base.getBoundingClientRect();
+    }
+    function handleMove(e) {
+        if (!touching) return;
+        let clientX, clientY;
+        if (e.touches) {
+            for (let t of e.touches) {
+                if (t.clientX > screenW / 2) { clientX = t.clientX; clientY = t.clientY; break; }
+            }
+            if (!clientX) return;
+        } else { clientX = e.clientX; clientY = e.clientY; }
+        let centerX = baseRect.left + baseRect.width / 2;
+        let centerY = baseRect.top + baseRect.height / 2;
+        let dx = clientX - centerX;
+        let dy = clientY - centerY;
+        let dist = Math.sqrt(dx * dx + dy * dy);
+        let maxDist = 40;
+        if (dist > maxDist) { dx = (dx / dist) * maxDist; dy = (dy / dist) * maxDist; }
+        stick.style.left = (50 + (dx / baseRect.width) * 100) + '%';
+        stick.style.top = (50 + (dy / baseRect.height) * 100) + '%';
+        if (dist > 5) {
+            input.aimDir = {x: dx / dist, y: dy / dist};
+            localPlayer.aimAngle = Math.atan2(dy, dx);
+        }
+    }
+    function handleEnd() {
+        touching = false;
+        input.aimActive = false;
+        stick.style.left = '50%';
+        stick.style.top = '50%';
+    }
+
+    base.addEventListener('touchstart', handleStart);
+    document.addEventListener('touchmove', e => { if (touching) handleMove(e); });
+    document.addEventListener('touchend', e => {
+        if (touching) { handleEnd(); releaseBow(); hideAimJoystick(); }
+    });
+}
+
+function showAimJoystick() {
+    document.getElementById('aim-area').style.display = 'block';
+    document.getElementById('bow-btn').style.display = 'none';
+}
+function hideAimJoystick() {
+    document.getElementById('aim-area').style.display = 'none';
+    document.getElementById('bow-btn').style.display = 'flex';
 }
 
 // ============ 战斗系统 ============
 
 function attackSword() {
-    if (!localPlayer.alive) return;
+    if (!localPlayer.alive || gameState.phase !== 'playing') return;
     if (localPlayer.swordCooldown > 0) return;
-    if (gameState.myTeam === 'steve' && localPlayer.swordDurability <= 0) return;
 
-    localPlayer.swordCooldown = GAME_CONFIG.SWORD_COOLDOWN;
+    localPlayer.swordCooldown = CONFIG.SWORD_COOLDOWN;
+    localPlayer.lastWeapon = 'sword';
 
     if (gameState.myTeam === 'steve') {
+        if (localPlayer.swordDurability <= 0) return;
         localPlayer.swordDurability--;
-        // 找范围内最近敌人
-        let target = findNearestEnemy(GAME_CONFIG.SWORD_RANGE);
+
+        let target = findNearestEnemy(CONFIG.SWORD_RANGE);
         if (target) {
-            dealDamage(target, GAME_CONFIG.SWORD_DAMAGE);
-            NetworkManager.sendAttack('sword', target.id, GAME_CONFIG.SWORD_DAMAGE);
+            let angle = angleBetween(localPlayer.x, localPlayer.y, target.x, target.y);
+            triggerSlash(angle);
+            sendDamageToTarget(target, CONFIG.SWORD_DAMAGE, angle);
+        } else {
+            triggerSlash(localPlayer.facingAngle);
         }
     } else {
-        // 怪物攻击
-        let range = GAME_CONFIG.ZOMBIE_RANGE;
-        let damage = GAME_CONFIG.ZOMBIE_DAMAGE;
-        if (gameState.myMonster === 'fish') {
-            damage = GAME_CONFIG.FISH_DAMAGE;
-            range = GAME_CONFIG.FISH_RANGE;
-        }
-        if (gameState.myMonster === 'creeper') {
-            // 苦力怕爆炸
-            creeperExplode();
-            return;
-        }
-        if (gameState.myMonster === 'skeleton') {
-            // 骷髅射箭
-            shootSkeletonArrow();
-            return;
-        }
+        if (gameState.myMonster === 'creeper') { creeperExplode(); return; }
+        if (gameState.myMonster === 'skeleton') { shootSkeletonArrow(); return; }
+
+        let range = gameState.myMonster === 'fish' ? CONFIG.FISH_RANGE : CONFIG.ZOMBIE_RANGE;
+        let damage = gameState.myMonster === 'fish' ? CONFIG.FISH_DAMAGE : CONFIG.ZOMBIE_DAMAGE;
         let target = findNearestSteve(range);
         if (target) {
-            dealDamage(target, damage);
-            NetworkManager.sendAttack('melee', target.id, damage);
+            let angle = angleBetween(localPlayer.x, localPlayer.y, target.x, target.y);
+            triggerSlash(angle);
+            sendDamageToTarget(target, damage, angle);
+        } else {
+            triggerSlash(localPlayer.facingAngle);
         }
     }
     updateHUD();
 }
 
+function triggerSlash(angle) {
+    localPlayer.slashActive = true;
+    localPlayer.slashTimer = 0.2;
+    localPlayer.slashAngle = angle;
+}
+
 function startBowCharge() {
-    if (!localPlayer.alive) return;
+    if (!localPlayer.alive || gameState.phase !== 'playing') return;
     if (gameState.myTeam !== 'steve') return;
     if (localPlayer.arrows <= 0) return;
     if (localPlayer.bowCooldown > 0) return;
 
     localPlayer.bowCharging = true;
     localPlayer.bowChargeStart = Date.now();
+    localPlayer.lastWeapon = 'bow';
 }
 
 function releaseBow() {
@@ -405,126 +646,119 @@ function releaseBow() {
 
     if (localPlayer.arrows <= 0) return;
     localPlayer.arrows--;
-    localPlayer.bowCooldown = GAME_CONFIG.BOW_COOLDOWN;
+    localPlayer.bowCooldown = CONFIG.BOW_COOLDOWN;
 
     let chargeTime = (Date.now() - localPlayer.bowChargeStart) / 1000;
-    chargeTime = Math.min(chargeTime, GAME_CONFIG.BOW_CHARGE_TIME);
-    let damageRatio = chargeTime / GAME_CONFIG.BOW_CHARGE_TIME;
-    let damage = Math.round(GAME_CONFIG.BOW_DAMAGE_MIN + (GAME_CONFIG.BOW_DAMAGE_MAX - GAME_CONFIG.BOW_DAMAGE_MIN) * damageRatio);
+    chargeTime = Math.min(chargeTime, CONFIG.BOW_CHARGE_TIME);
+    let ratio = chargeTime / CONFIG.BOW_CHARGE_TIME;
+    let damage = Math.round(CONFIG.BOW_DAMAGE_MIN + (CONFIG.BOW_DAMAGE_MAX - CONFIG.BOW_DAMAGE_MIN) * ratio);
 
-    // 找目标
-    let target = findNearestEnemy(GAME_CONFIG.BOW_RANGE);
-    if (target) {
-        // 创建箭矢飞行
-        let arrow = {
-            x: localPlayer.x,
-            y: localPlayer.y,
-            targetId: target.id,
-            targetX: target.x,
-            targetY: target.y,
-            damage: damage,
-            speed: 15, // 格/秒
-            owner: gameState.myId,
-        };
-        gameState.projectiles.push(arrow);
-        NetworkManager.sendProjectile(arrow);
+    let dirX = input.aimDir.x || Math.cos(localPlayer.aimAngle);
+    let dirY = input.aimDir.y || Math.sin(localPlayer.aimAngle);
+    if (Math.abs(dirX) < 0.01 && Math.abs(dirY) < 0.01) {
+        dirX = Math.cos(localPlayer.facingAngle);
+        dirY = Math.sin(localPlayer.facingAngle);
     }
+
+    let arrow = {
+        id: gameState.myId + '_' + Date.now(),
+        x: localPlayer.x, y: localPlayer.y,
+        dirX: dirX, dirY: dirY,
+        damage: damage,
+        speed: CONFIG.ARROW_SPEED,
+        owner: gameState.myId,
+        ownerTeam: gameState.myTeam,
+        trail: [{x: localPlayer.x, y: localPlayer.y}],
+        distTraveled: 0,
+    };
+
+    gameState.projectiles.push(arrow);
+    NetworkManager.sendProjectile(arrow);
     updateHUD();
 }
 
 function shootSkeletonArrow() {
     if (localPlayer.swordCooldown > 0) return;
-    localPlayer.swordCooldown = GAME_CONFIG.SWORD_COOLDOWN;
+    localPlayer.swordCooldown = CONFIG.SWORD_COOLDOWN;
 
-    let target = findNearestSteve(GAME_CONFIG.SKELETON_RANGE);
-    if (target) {
-        let arrow = {
-            x: localPlayer.x,
-            y: localPlayer.y,
-            targetId: target.id,
-            targetX: target.x,
-            targetY: target.y,
-            damage: GAME_CONFIG.SKELETON_DAMAGE,
-            speed: 12,
-            owner: gameState.myId,
-        };
-        gameState.projectiles.push(arrow);
-        NetworkManager.sendProjectile(arrow);
-    }
+    let target = findNearestSteve(CONFIG.SKELETON_RANGE);
+    if (!target) return;
+
+    let angle = angleBetween(localPlayer.x, localPlayer.y, target.x, target.y);
+    let arrow = {
+        id: gameState.myId + '_' + Date.now(),
+        x: localPlayer.x, y: localPlayer.y,
+        dirX: Math.cos(angle), dirY: Math.sin(angle),
+        damage: CONFIG.SKELETON_DAMAGE,
+        speed: CONFIG.ARROW_SPEED,
+        owner: gameState.myId,
+        ownerTeam: 'monster',
+        trail: [{x: localPlayer.x, y: localPlayer.y}],
+        distTraveled: 0,
+    };
+    gameState.projectiles.push(arrow);
+    NetworkManager.sendProjectile(arrow);
 }
 
 function creeperExplode() {
-    // 苦力怕自爆
-    let px = localPlayer.x;
-    let py = localPlayer.y;
+    let px = localPlayer.x, py = localPlayer.y;
 
-    // 对范围内所有史蒂夫造成伤害
-    Object.values(gameState.players).forEach(player => {
-        if (player.team === 'steve' && player.alive) {
-            let dist = Math.sqrt((player.x - px) ** 2 + (player.y - py) ** 2);
-            let gridDist = Math.ceil(dist);
-            if (gridDist <= 5) {
-                let damage = CREEPER_DAMAGE[gridDist] || 0;
-                NetworkManager.sendAttack('explode', player.id, damage);
-            }
+    let allTargets = getAllEntities();
+    allTargets.forEach(target => {
+        if (target.id === gameState.myId) return;
+        if (target.team === 'monster' && gameState.myTeam === 'monster') return;
+        let dist = distBetween(px, py, target.x, target.y);
+        let gridDist = Math.ceil(dist);
+        if (gridDist <= 5 && CREEPER_DMG[gridDist]) {
+            let angle = angleBetween(px, py, target.x, target.y);
+            NetworkManager.sendDamage(target.id, CREEPER_DMG[gridDist], angle);
         }
     });
 
-    // 爆炸特效
-    gameState.effects.push({
-        type: 'explosion',
-        x: px,
-        y: py,
-        timer: 0.5,
-    });
-
+    gameState.effects.push({type: 'explosion', x: px, y: py, timer: 0.5, maxTimer: 0.5});
     NetworkManager.sendExplosion(px, py);
 
-    // 自己死亡
     localPlayer.hp = 0;
     localPlayer.alive = false;
     handleDeath();
 }
 
 function usePotion() {
-    if (!localPlayer.alive) return;
+    if (!localPlayer.alive || gameState.phase !== 'playing') return;
     if (localPlayer.potions <= 0) return;
     if (localPlayer.hp >= localPlayer.maxHp) return;
 
     localPlayer.potions--;
-    localPlayer.hp = Math.min(localPlayer.hp + GAME_CONFIG.POTION_HEAL, localPlayer.maxHp);
+    localPlayer.hp = Math.min(localPlayer.hp + CONFIG.POTION_HEAL, localPlayer.maxHp);
     updateHUD();
     NetworkManager.syncPlayer();
 }
+// ============ 查找目标 ============
 
 function findNearestEnemy(range) {
     let nearest = null;
-    let nearestDist = range + 1;
+    let nearestDist = range + 0.1;
 
-    Object.values(gameState.players).forEach(player => {
-        if (!player.alive) return;
-        if (player.id === gameState.myId) return;
-
-        // 史蒂夫找怪物，怪物找史蒂夫
-        if (gameState.myTeam === 'steve' && player.team === 'steve') return;
-        if (gameState.myTeam === 'monster' && player.team === 'monster') return;
-
-        let dist = Math.sqrt((player.x - localPlayer.x) ** 2 + (player.y - localPlayer.y) ** 2);
-        if (dist < nearestDist) {
-            nearestDist = dist;
-            nearest = player;
-        }
+    Object.values(gameState.players).forEach(p => {
+        if (!p.alive || p.id === gameState.myId) return;
+        if (gameState.myTeam === 'steve' && p.team === 'steve') return;
+        if (gameState.myTeam === 'monster' && p.team === 'monster') return;
+        let d = distBetween(localPlayer.x, localPlayer.y, p.x, p.y);
+        if (d < nearestDist) { nearestDist = d; nearest = p; }
     });
 
-    // 也检查AI怪物（对于史蒂夫）
+    // AI怪物（对史蒂夫）
     if (gameState.myTeam === 'steve') {
-        gameState.aiMonsters.forEach(monster => {
-            if (!monster.alive) return;
-            let dist = Math.sqrt((monster.x - localPlayer.x) ** 2 + (monster.y - localPlayer.y) ** 2);
-            if (dist < nearestDist) {
-                nearestDist = dist;
-                nearest = monster;
-            }
+        gameState.aiMonsters.forEach(m => {
+            if (!m.alive) return;
+            let d = distBetween(localPlayer.x, localPlayer.y, m.x, m.y);
+            if (d < nearestDist) { nearestDist = d; nearest = m; }
+        });
+        // 鱼群（对史蒂夫）
+        (gameState.aiFish || []).forEach(fish => {
+            if (!fish.alive) return;
+            let d = distBetween(localPlayer.x, localPlayer.y, fish.x, fish.y);
+            if (d < nearestDist) { nearestDist = d; nearest = fish; }
         });
     }
 
@@ -533,77 +767,84 @@ function findNearestEnemy(range) {
 
 function findNearestSteve(range) {
     let nearest = null;
-    let nearestDist = range + 1;
-
-    Object.values(gameState.players).forEach(player => {
-        if (!player.alive) return;
-        if (player.team !== 'steve') return;
-
-        let dist = Math.sqrt((player.x - localPlayer.x) ** 2 + (player.y - localPlayer.y) ** 2);
-        if (dist < nearestDist) {
-            nearestDist = dist;
-            nearest = player;
-        }
+    let nearestDist = range + 0.1;
+    Object.values(gameState.players).forEach(p => {
+        if (!p.alive || p.team !== 'steve') return;
+        let d = distBetween(localPlayer.x, localPlayer.y, p.x, p.y);
+        if (d < nearestDist) { nearestDist = d; nearest = p; }
     });
-
     return nearest;
 }
 
-function dealDamage(target, damage) {
-    // 应用护甲减伤
-    if (target.team === 'steve') {
-        damage = Math.round(damage * (1 - GAME_CONFIG.STEVE_ARMOR));
-    }
-    // 网络发送伤害
-    NetworkManager.sendDamage(target.id, damage);
+function getAllEntities() {
+    let entities = [];
+    Object.values(gameState.players).forEach(p => {
+        if (p.alive && p.id !== gameState.myId) entities.push(p);
+    });
+    gameState.aiMonsters.forEach(m => { if (m.alive) entities.push(m); });
+    (gameState.aiFish || []).forEach(f => { if (f.alive) entities.push(f); });
+    return entities;
 }
 
-function takeDamage(amount) {
+function sendDamageToTarget(target, damage, angle) {
+    NetworkManager.sendDamage(target.id, damage, angle);
+}
+
+// ============ 受伤/击退/死亡 ============
+
+function takeDamage(amount, fromAngle) {
     if (!localPlayer.alive) return;
 
-    // 史蒂夫有护甲
     if (gameState.myTeam === 'steve') {
-        amount = Math.round(amount * (1 - GAME_CONFIG.STEVE_ARMOR));
+        amount = Math.round(amount * (1 - CONFIG.STEVE_ARMOR));
+        if (amount < 1) amount = 1;
     }
 
     localPlayer.hp -= amount;
+    applyKnockback(fromAngle);
+
     if (localPlayer.hp <= 0) {
         localPlayer.hp = 0;
         localPlayer.alive = false;
         handleDeath();
     }
+
     updateHUD();
     NetworkManager.syncPlayer();
+}
+
+function applyKnockback(fromAngle) {
+    if (fromAngle === undefined || fromAngle === null) return;
+    localPlayer.knockback = true;
+    localPlayer.knockbackTimer = CONFIG.KNOCKBACK_TIME;
+    localPlayer.knockbackDirX = Math.cos(fromAngle);
+    localPlayer.knockbackDirY = Math.sin(fromAngle);
+    localPlayer.knockbackSpeed = CONFIG.KNOCKBACK_DIST / CONFIG.KNOCKBACK_TIME;
 }
 
 function handleDeath() {
     if (gameState.myTeam === 'steve') {
         localPlayer.lives--;
-        // 掉落装备
-        if (localPlayer.x && localPlayer.y) {
-            NetworkManager.sendDrop(localPlayer.x, localPlayer.y, {
-                arrows: localPlayer.arrows,
-                swordDurability: localPlayer.swordDurability,
-                potions: localPlayer.potions,
-            });
-        }
+        NetworkManager.sendDrop(localPlayer.x, localPlayer.y, {
+            arrows: localPlayer.arrows,
+            swordDurability: localPlayer.swordDurability,
+            potions: localPlayer.potions,
+        });
         localPlayer.arrows = 0;
         localPlayer.swordDurability = 0;
         localPlayer.potions = 0;
 
         if (localPlayer.lives > 0) {
-            // 复活倒计时
             localPlayer.respawnTimer = 5;
-            showDeathOverlay();
+            showDeath();
         } else {
-            // 彻底死亡
             NetworkManager.sendPermaDeath();
+            showDeath();
             checkGameOver();
         }
     } else {
-        // 怪物5秒后随机复活
-        localPlayer.respawnTimer = GAME_CONFIG.MONSTER_RESPAWN;
-        showDeathOverlay();
+        localPlayer.respawnTimer = CONFIG.MONSTER_RESPAWN;
+        showDeath();
     }
     NetworkManager.syncPlayer();
 }
@@ -611,237 +852,260 @@ function handleDeath() {
 function respawn() {
     localPlayer.alive = true;
     localPlayer.hp = localPlayer.maxHp;
+    localPlayer.knockback = false;
+    localPlayer.knockbackTimer = 0;
 
     if (gameState.myTeam === 'steve') {
-        // 中心点复活
-        localPlayer.x = 250;
-        localPlayer.y = 250;
-        // 初始装备
-        localPlayer.swordDurability = 200;
-        localPlayer.arrows = 64;
+        localPlayer.x = CONFIG.MAP_SIZE / 2;
+        localPlayer.y = CONFIG.MAP_SIZE / 2;
+        localPlayer.swordDurability = CONFIG.SWORD_DURABILITY;
+        localPlayer.arrows = CONFIG.MAX_ARROWS;
         localPlayer.potions = 1;
     } else {
-        // 随机位置复活
-        let pos = getRandomLandPosition();
-        if (gameState.myMonster === 'fish') {
-            pos = getRandomWaterPosition();
-        }
+        let pos;
+        if (gameState.myMonster === 'fish') pos = getRandomWaterPos();
+        else pos = getRandomLandPos();
         localPlayer.x = pos.x;
         localPlayer.y = pos.y;
     }
 
-    hideDeathOverlay();
+    hideDeath();
     updateHUD();
     NetworkManager.syncPlayer();
 }
 
-function getRandomLandPosition() {
-    let x, y;
-    do {
-        x = Math.floor(Math.random() * GAME_CONFIG.MAP_SIZE);
-        y = Math.floor(Math.random() * GAME_CONFIG.MAP_SIZE);
-    } while (gameState.map[y] && gameState.map[y][x] === 1);
-    return {x, y};
-}
+function showDeath() { document.getElementById('death-overlay').style.display = 'flex'; }
+function hideDeath() { document.getElementById('death-overlay').style.display = 'none'; }
 
-function getRandomWaterPosition() {
-    let x, y;
-    do {
-        x = Math.floor(Math.random() * GAME_CONFIG.MAP_SIZE);
-        y = Math.floor(Math.random() * GAME_CONFIG.MAP_SIZE);
-    } while (gameState.map[y] && gameState.map[y][x] === 0);
-    return {x, y};
-}
-
-function showDeathOverlay() {
-    document.getElementById('death-overlay').style.display = 'flex';
-}
-
-function hideDeathOverlay() {
-    document.getElementById('death-overlay').style.display = 'none';
-}
-
-// ============ 补给系统 ============
+// ============ 补给/拾取 ============
 
 function checkSupply() {
     if (gameState.myTeam !== 'steve') return;
     if (!localPlayer.alive) return;
+    if (!gameState.supplyReady) return;
 
-    let dist = Math.sqrt((localPlayer.x - 250) ** 2 + (localPlayer.y - 250) ** 2);
-    if (dist <= 2) {
-        let now = Date.now() / 1000;
-        if (now - gameState.lastSupplyTime >= GAME_CONFIG.SUPPLY_COOLDOWN) {
-            // 补给！
-            gameState.lastSupplyTime = now;
-            localPlayer.arrows = GAME_CONFIG.MAX_ARROWS;
-            localPlayer.swordDurability = GAME_CONFIG.SWORD_DURABILITY;
-            localPlayer.potions++;
-            updateHUD();
-        }
+    let center = CONFIG.MAP_SIZE / 2;
+    let dist = distBetween(localPlayer.x, localPlayer.y, center, center);
+
+    if (dist <= CONFIG.SUPPLY_RANGE) {
+        gameState.supplyReady = false;
+        gameState.supplyTimer = CONFIG.SUPPLY_COOLDOWN;
+        localPlayer.arrows = CONFIG.MAX_ARROWS;
+        localPlayer.swordDurability = CONFIG.SWORD_DURABILITY;
+        localPlayer.potions++;
+        updateHUD();
+        NetworkManager.syncPlayer();
     }
+}
+
+function checkPickup() {
+    if (gameState.myTeam !== 'steve') return;
+    if (!localPlayer.alive) return;
+
+    gameState.droppedItems = gameState.droppedItems.filter(item => {
+        let dist = distBetween(localPlayer.x, localPlayer.y, item.x, item.y);
+        if (dist < 1.5) {
+            localPlayer.arrows = Math.min(localPlayer.arrows + (item.arrows || 0), CONFIG.MAX_ARROWS);
+            if ((item.swordDurability || 0) > localPlayer.swordDurability) {
+                localPlayer.swordDurability = item.swordDurability;
+            }
+            localPlayer.potions += (item.potions || 0);
+            NetworkManager.removeDroppedItem(item.id);
+            updateHUD();
+            return false;
+        }
+        return true;
+    });
 }
 
 // ============ 游戏循环 ============
 
-let lastTime = 0;
-
 function gameLoop(timestamp) {
     let dt = (timestamp - lastTime) / 1000;
-    if (dt > 0.1) dt = 0.1; // 限制最大帧间隔
+    if (dt > 0.1) dt = 0.1;
     lastTime = timestamp;
 
     if (gameState.phase === 'playing') {
         update(dt);
         render();
+        renderMinimap();
     }
 
     requestAnimationFrame(gameLoop);
 }
 
 function update(dt) {
+    // 复活倒计时
     if (!localPlayer.alive) {
-        // 复活倒计时
         if (localPlayer.respawnTimer > 0) {
             localPlayer.respawnTimer -= dt;
             document.getElementById('respawn-timer').textContent =
                 Math.ceil(localPlayer.respawnTimer) + '秒后复活...';
             if (localPlayer.respawnTimer <= 0) {
-                respawn();
+                if (gameState.myTeam === 'steve' && localPlayer.lives <= 0) {
+                    // 永久死亡，不复活
+                } else {
+                    respawn();
+                }
             }
         }
+        updateProjectiles(dt);
+        updateEffects(dt);
+        updateTimer(dt);
         return;
     }
 
-    // 移动
-    let moveX = 0, moveY = 0;
+    // 击退
+    if (localPlayer.knockback) {
+        localPlayer.knockbackTimer -= dt;
+        let moveX = localPlayer.knockbackDirX * localPlayer.knockbackSpeed * dt;
+        let moveY = localPlayer.knockbackDirY * localPlayer.knockbackSpeed * dt;
+        let newX = localPlayer.x + moveX;
+        let newY = localPlayer.y + moveY;
+        newX = Math.max(0, Math.min(CONFIG.MAP_SIZE - 1, newX));
+        newY = Math.max(0, Math.min(CONFIG.MAP_SIZE - 1, newY));
 
-    // 键盘输入
-    if (input.keys['w'] || input.keys['arrowup']) moveY -= 1;
-    if (input.keys['s'] || input.keys['arrowdown']) moveY += 1;
-    if (input.keys['a'] || input.keys['arrowleft']) moveX -= 1;
-    if (input.keys['d'] || input.keys['arrowright']) moveX += 1;
-
-    // 摇杆输入
-    if (input.joystickActive) {
-        moveX = input.joystickDir.x;
-        moveY = input.joystickDir.y;
-    }
-
-    // 标准化
-    let moveMag = Math.sqrt(moveX * moveX + moveY * moveY);
-    if (moveMag > 1) {
-        moveX /= moveMag;
-        moveY /= moveMag;
-    }
-
-    // 速度计算
-    let speed = GAME_CONFIG.MOVE_SPEED;
-    let tileX = Math.floor(localPlayer.x);
-    let tileY = Math.floor(localPlayer.y);
-    localPlayer.inWater = gameState.map[tileY] && gameState.map[tileY][tileX] === 1;
-
-    if (localPlayer.inWater) {
         if (gameState.myMonster === 'fish') {
-            // 鱼在水中不减速
-        } else {
-            speed *= GAME_CONFIG.WATER_SLOW;
+            let tx = Math.floor(newX), ty = Math.floor(newY);
+            if (!(gameState.map[ty] && gameState.map[ty][tx] === 1)) {
+                newX = localPlayer.x;
+                newY = localPlayer.y;
+            }
+        }
+
+        localPlayer.x = newX;
+        localPlayer.y = newY;
+
+        if (localPlayer.knockbackTimer <= 0) {
+            localPlayer.knockback = false;
         }
     }
 
-    // 鱼不能上岸
-    let newX = localPlayer.x + moveX * speed * dt;
-    let newY = localPlayer.y + moveY * speed * dt;
+    // 正常移动
+    if (!localPlayer.knockback) {
+        let moveX = 0, moveY = 0;
 
-    // 边界检查
-    newX = Math.max(0, Math.min(GAME_CONFIG.MAP_SIZE - 1, newX));
-    newY = Math.max(0, Math.min(GAME_CONFIG.MAP_SIZE - 1, newY));
+        if (input.keys['w'] || input.keys['arrowup']) moveY -= 1;
+        if (input.keys['s'] || input.keys['arrowdown']) moveY += 1;
+        if (input.keys['a'] || input.keys['arrowleft']) moveX -= 1;
+        if (input.keys['d'] || input.keys['arrowright']) moveX += 1;
 
-    // 鱼的移动限制
-    if (gameState.myMonster === 'fish') {
-        let newTileX = Math.floor(newX);
-        let newTileY = Math.floor(newY);
-        if (gameState.map[newTileY] && gameState.map[newTileY][newTileX] !== 1) {
-            // 不允许上岸
-            newX = localPlayer.x;
-            newY = localPlayer.y;
+        if (input.joystickActive) {
+            moveX = input.joystickDir.x;
+            moveY = input.joystickDir.y;
         }
+
+        let mag = Math.sqrt(moveX * moveX + moveY * moveY);
+        if (mag > 1) { moveX /= mag; moveY /= mag; }
+
+        if (mag > 0.1) {
+            localPlayer.facingAngle = Math.atan2(moveY, moveX);
+        }
+
+        let speed = getMySpeed();
+        let tileX = Math.floor(localPlayer.x);
+        let tileY = Math.floor(localPlayer.y);
+        localPlayer.inWater = gameState.map[tileY] && gameState.map[tileY][tileX] === 1;
+
+        if (localPlayer.inWater && gameState.myMonster !== 'fish') {
+            speed *= CONFIG.WATER_SLOW;
+        }
+
+        let newX = localPlayer.x + moveX * speed * dt;
+        let newY = localPlayer.y + moveY * speed * dt;
+        newX = Math.max(0, Math.min(CONFIG.MAP_SIZE - 1, newX));
+        newY = Math.max(0, Math.min(CONFIG.MAP_SIZE - 1, newY));
+
+        if (gameState.myMonster === 'fish') {
+            let ntx = Math.floor(newX), nty = Math.floor(newY);
+            if (!(gameState.map[nty] && gameState.map[nty][ntx] === 1)) {
+                newX = localPlayer.x;
+                newY = localPlayer.y;
+            }
+        }
+
+        localPlayer.x = newX;
+        localPlayer.y = newY;
     }
 
-    localPlayer.x = newX;
-    localPlayer.y = newY;
-
-    // 冷却更新
+    // 冷却
     if (localPlayer.swordCooldown > 0) localPlayer.swordCooldown -= dt;
     if (localPlayer.bowCooldown > 0) localPlayer.bowCooldown -= dt;
 
-    // 回血（史蒂夫）
-    if (gameState.myTeam === 'steve') {
+    // 刀光
+    if (localPlayer.slashActive) {
+        localPlayer.slashTimer -= dt;
+        if (localPlayer.slashTimer <= 0) localPlayer.slashActive = false;
+    }
+
+    // 回血
+    if (gameState.myTeam === 'steve' && localPlayer.hp < localPlayer.maxHp) {
         localPlayer.regenTimer += dt;
-        if (localPlayer.regenTimer >= GAME_CONFIG.STEVE_REGEN) {
+        if (localPlayer.regenTimer >= CONFIG.STEVE_REGEN_INTERVAL) {
             localPlayer.regenTimer = 0;
-            if (localPlayer.hp < localPlayer.maxHp) {
-                localPlayer.hp++;
-                updateHUD();
-            }
+            localPlayer.hp = Math.min(localPlayer.hp + 1, localPlayer.maxHp);
+            updateHUD();
         }
     }
 
-    // 拾取装备
+    // 蓄力UI
+    if (localPlayer.bowCharging) {
+        let charge = (Date.now() - localPlayer.bowChargeStart) / 1000 / CONFIG.BOW_CHARGE_TIME;
+        charge = Math.min(charge, 1);
+        document.getElementById('aim-charge-fill').style.width = (charge * 100) + '%';
+    }
+
+    checkSupply();
     checkPickup();
 
-    // 补给
-    checkSupply();
-
-    // 更新飞行箭矢
-    updateProjectiles(dt);
-
-    // 更新特效
-    updateEffects(dt);
-
-    // 更新计时器
-    gameState.timeLeft -= dt;
-    if (gameState.timeLeft <= 0) {
-        // 史蒂夫获胜！
-        endGame('steve');
+    // 补给计时
+    if (!gameState.supplyReady) {
+        gameState.supplyTimer -= dt;
+        if (gameState.supplyTimer <= 0) gameState.supplyReady = true;
     }
-    updateTimer();
+
+    updateProjectiles(dt);
+    updateEffects(dt);
+    updateTimer(dt);
 
     // 网络同步
-    NetworkManager.syncPlayer();
-
-    // 水面动画
-    waterAnimTimer += dt;
-    if (waterAnimTimer > 0.5) {
-        waterAnimTimer = 0;
-        waterFrame++;
+    syncTimer += dt;
+    if (syncTimer > 0.08) {
+        syncTimer = 0;
+        NetworkManager.syncPlayer();
     }
+
+    // 水动画
+    waterTimer += dt;
+    if (waterTimer > 0.4) { waterTimer = 0; waterFrame++; }
 }
 
 function updateProjectiles(dt) {
     gameState.projectiles = gameState.projectiles.filter(arrow => {
-        // 移动箭矢向目标
-        let target = gameState.players[arrow.targetId] || gameState.aiMonsters.find(m => m.id === arrow.targetId);
-        let tx = target ? target.x : arrow.targetX;
-        let ty = target ? target.y : arrow.targetY;
+        arrow.x += arrow.dirX * arrow.speed * dt;
+        arrow.y += arrow.dirY * arrow.speed * dt;
+        arrow.distTraveled += arrow.speed * dt;
 
-        let dx = tx - arrow.x;
-        let dy = ty - arrow.y;
-        let dist = Math.sqrt(dx * dx + dy * dy);
+        arrow.trail.push({x: arrow.x, y: arrow.y});
+        if (arrow.trail.length > 20) arrow.trail.shift();
 
-        if (dist < 0.5) {
-            // 命中
-            if (target && target.alive && arrow.owner === gameState.myId) {
-                NetworkManager.sendDamage(arrow.targetId, arrow.damage);
+        if (arrow.distTraveled > CONFIG.BOW_RANGE) return false;
+        if (arrow.x < 0 || arrow.x >= CONFIG.MAP_SIZE || arrow.y < 0 || arrow.y >= CONFIG.MAP_SIZE) return false;
+
+        // 碰撞（自己的箭才判定）
+        if (arrow.owner === gameState.myId) {
+            let entities = getAllEntities();
+            for (let e of entities) {
+                if (arrow.ownerTeam === e.team) continue;
+                let d = distBetween(arrow.x, arrow.y, e.x, e.y);
+                if (d < 0.8) {
+                    let angle = Math.atan2(arrow.dirY, arrow.dirX);
+                    NetworkManager.sendDamage(e.id, arrow.damage, angle);
+                    gameState.effects.push({type: 'hit', x: arrow.x, y: arrow.y, timer: 0.15, maxTimer: 0.15});
+                    return false;
+                }
             }
-            return false;
         }
-
-        arrow.x += (dx / dist) * arrow.speed * dt;
-        arrow.y += (dy / dist) * arrow.speed * dt;
-
-        // 超出范围消失
-        let travelDist = Math.sqrt((arrow.x - arrow.startX || 0) ** 2 + (arrow.y - arrow.startY || 0) ** 2);
-        if (dist > 35) return false;
 
         return true;
     });
@@ -854,177 +1118,275 @@ function updateEffects(dt) {
     });
 }
 
-function checkPickup() {
-    if (gameState.myTeam !== 'steve') return;
-
-    // 检查掉落物
-    gameState.droppedItems = gameState.droppedItems || [];
-    gameState.droppedItems.forEach((item, index) => {
-        let dist = Math.sqrt((item.x - localPlayer.x) ** 2 + (item.y - localPlayer.y) ** 2);
-        if (dist < 1.5) {
-            // 拾取
-            localPlayer.arrows = Math.min(localPlayer.arrows + (item.arrows || 0), GAME_CONFIG.MAX_ARROWS);
-            localPlayer.swordDurability = Math.max(localPlayer.swordDurability, item.swordDurability || 0);
-            localPlayer.potions += (item.potions || 0);
-            gameState.droppedItems.splice(index, 1);
-            NetworkManager.removeDroppedItem(item.id);
-            updateHUD();
-        }
-    });
+function updateTimer(dt) {
+    gameState.timeLeft -= dt;
+    if (gameState.timeLeft <= 0) {
+        gameState.timeLeft = 0;
+        endGame('steve');
+    }
+    let m = Math.floor(gameState.timeLeft / 60);
+    let s = Math.floor(gameState.timeLeft % 60);
+    document.getElementById('timer').textContent =
+        m.toString().padStart(2, '0') + ':' + s.toString().padStart(2, '0');
 }
 
 // ============ 渲染 ============
 
 function render() {
-    ctx.clearRect(0, 0, screenWidth, screenHeight);
+    ctx.clearRect(0, 0, screenW, screenH);
     ctx.imageSmoothingEnabled = false;
 
-    // 相机跟随玩家
-    gameState.camera.x = localPlayer.x - (screenWidth / viewTileSize) / 2;
-    gameState.camera.y = localPlayer.y - (screenHeight / viewTileSize) / 2;
+    let camX = localPlayer.x - (screenW / viewTileSize) / 2;
+    let camY = localPlayer.y - (screenH / viewTileSize) / 2;
+    gameState.camera = {x: camX, y: camY};
 
-    let tilesX = Math.ceil(screenWidth / viewTileSize) + 2;
-    let tilesY = Math.ceil(screenHeight / viewTileSize) + 2;
+    let tilesX = Math.ceil(screenW / viewTileSize) + 2;
+    let tilesY = Math.ceil(screenH / viewTileSize) + 2;
+    let startX = Math.floor(camX);
+    let startY = Math.floor(camY);
 
-    let startX = Math.floor(gameState.camera.x);
-    let startY = Math.floor(gameState.camera.y);
-
-    // 绘制地图
+    // 地图
     for (let dy = 0; dy < tilesY; dy++) {
         for (let dx = 0; dx < tilesX; dx++) {
-            let mapX = startX + dx;
-            let mapY = startY + dy;
-
-            if (mapX < 0 || mapX >= GAME_CONFIG.MAP_SIZE || mapY < 0 || mapY >= GAME_CONFIG.MAP_SIZE) continue;
-
-            let screenPosX = (mapX - gameState.camera.x) * viewTileSize;
-            let screenPosY = (mapY - gameState.camera.y) * viewTileSize;
-
-            let tileType = gameState.map[mapY][mapX] === 1 ? 'water' : 'grass';
-            Renderer.drawTile(ctx, tileType, screenPosX, screenPosY, viewTileSize, waterFrame);
+            let mx = startX + dx;
+            let my = startY + dy;
+            let sx = (mx - camX) * viewTileSize;
+            let sy = (my - camY) * viewTileSize;
+            if (mx < 0 || mx >= CONFIG.MAP_SIZE || my < 0 || my >= CONFIG.MAP_SIZE) {
+                ctx.fillStyle = '#111';
+                ctx.fillRect(sx, sy, viewTileSize + 1, viewTileSize + 1);
+                continue;
+            }
+            let type = gameState.map[my][mx] === 1 ? 'water' : 'grass';
+            Renderer.drawTile(ctx, type, sx, sy, viewTileSize + 1, waterFrame);
         }
     }
 
-    // 绘制补给点
-    let supplyScreenX = (250 - gameState.camera.x) * viewTileSize;
-    let supplyScreenY = (250 - gameState.camera.y) * viewTileSize;
-    Renderer.drawEntity(ctx, 'supply', supplyScreenX, supplyScreenY, viewTileSize * 2);
-
-    // 绘制掉落物
-    if (gameState.droppedItems) {
-        gameState.droppedItems.forEach(item => {
-            let sx = (item.x - gameState.camera.x) * viewTileSize;
-            let sy = (item.y - gameState.camera.y) * viewTileSize;
-            Renderer.drawEntity(ctx, 'sword', sx, sy, viewTileSize * 0.8);
-        });
+    // 补给点（村庄房子）
+    let center = CONFIG.MAP_SIZE / 2;
+    let houseSize = viewTileSize * 3;
+    let houseSX = (center - 1.5 - camX) * viewTileSize;
+    let houseSY = (center - 1.5 - camY) * viewTileSize;
+    if (Renderer.cache.villageHouse) {
+        ctx.drawImage(Renderer.cache.villageHouse, houseSX, houseSY, houseSize, houseSize);
+    }
+    // 补给倒计时文字
+    if (gameState.myTeam === 'steve') {
+        if (!gameState.supplyReady) {
+            let tl = Math.ceil(gameState.supplyTimer);
+            let mm = Math.floor(tl / 60);
+            let ss = tl % 60;
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.fillRect(houseSX + houseSize / 2 - 22, houseSY - 16, 44, 14);
+            ctx.fillStyle = '#f39c12';
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(mm + ':' + ss.toString().padStart(2, '0'), houseSX + houseSize / 2, houseSY - 5);
+        } else {
+            ctx.fillStyle = '#4ecca3';
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('可补给', houseSX + houseSize / 2, houseSY - 5);
+        }
     }
 
-    // 绘制其他玩家
-    Object.values(gameState.players).forEach(player => {
-        if (player.id === gameState.myId) return;
-        if (!player.alive) return;
+    // 掉落物箱子
+    gameState.droppedItems.forEach(item => {
+        let sx = (item.x - camX) * viewTileSize - viewTileSize * 0.3;
+        let sy = (item.y - camY) * viewTileSize - viewTileSize * 0.3;
+        Renderer.drawEntity(ctx, 'chest', sx, sy, viewTileSize * 0.8);
+    });
 
-        let sx = (player.x - gameState.camera.x) * viewTileSize;
-        let sy = (player.y - gameState.camera.y) * viewTileSize;
-
-        let sprite = player.team === 'steve' ? 'steve' : (player.monster || 'zombie');
+    // 其他玩家
+    Object.values(gameState.players).forEach(p => {
+        if (p.id === gameState.myId || !p.alive) return;
+        let sx = (p.x - camX) * viewTileSize;
+        let sy = (p.y - camY) * viewTileSize;
+        let sprite = p.team === 'steve' ? 'steve' : (p.monster || 'zombie');
         Renderer.drawEntity(ctx, sprite, sx, sy, viewTileSize);
 
-        // 血条
-        drawHealthBar(ctx, sx, sy - 8, viewTileSize, player.hp, player.maxHp);
+        if (p.team === 'steve') {
+            Renderer.drawHeldWeapon(ctx, sx, sy, viewTileSize, p.lastWeapon || 'sword', p.facingAngle || 0);
+        }
 
-        // 名字
-        ctx.fillStyle = player.team === 'steve' ? '#4ecca3' : '#e74c3c';
+        ctx.fillStyle = p.team === 'steve' ? '#4ecca3' : '#ff6b6b';
         ctx.font = '10px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(player.name || '', sx + viewTileSize / 2, sy - 12);
+        ctx.fillText(p.name || '', sx + viewTileSize / 2, sy - 5);
+
+        drawEntityHP(ctx, sx, sy, viewTileSize, p.hp, p.maxHp);
     });
 
-    // 绘制AI怪物
-    gameState.aiMonsters.forEach(monster => {
-        if (!monster.alive) return;
-        let sx = (monster.x - gameState.camera.x) * viewTileSize;
-        let sy = (monster.y - gameState.camera.y) * viewTileSize;
-        Renderer.drawEntity(ctx, monster.type, sx, sy, viewTileSize);
-        drawHealthBar(ctx, sx, sy - 8, viewTileSize, monster.hp, monster.maxHp);
+    // AI怪物
+    gameState.aiMonsters.forEach(m => {
+        if (!m.alive) return;
+        let sx = (m.x - camX) * viewTileSize;
+        let sy = (m.y - camY) * viewTileSize;
+        Renderer.drawEntity(ctx, m.type, sx, sy, viewTileSize);
+        drawEntityHP(ctx, sx, sy, viewTileSize, m.hp, m.maxHp);
     });
 
-    // 绘制飞行箭矢
+    // 鱼群
+    (gameState.aiFish || []).forEach(fish => {
+        if (!fish.alive) return;
+        let sx = (fish.x - camX) * viewTileSize;
+        let sy = (fish.y - camY) * viewTileSize;
+        Renderer.drawEntity(ctx, 'fish', sx, sy, viewTileSize);
+        drawEntityHP(ctx, sx, sy, viewTileSize, fish.hp, fish.maxHp);
+    });
+
+    // 飞行箭矢+轨迹
     gameState.projectiles.forEach(arrow => {
-        let sx = (arrow.x - gameState.camera.x) * viewTileSize;
-        let sy = (arrow.y - gameState.camera.y) * viewTileSize;
-        Renderer.drawEntity(ctx, 'arrow', sx, sy, viewTileSize * 0.5);
+        Renderer.drawArrowTrail(ctx, arrow.trail, camX, camY, viewTileSize);
+        let sx = (arrow.x - camX) * viewTileSize;
+        let sy = (arrow.y - camY) * viewTileSize;
+        let arrowAngle = Math.atan2(arrow.dirY, arrow.dirX);
+        Renderer.drawArrow(ctx, sx, sy, viewTileSize, arrowAngle);
     });
 
-    // 绘制爆炸特效
+    // 特效
     gameState.effects.forEach(fx => {
         if (fx.type === 'explosion') {
-            let sx = (fx.x - gameState.camera.x) * viewTileSize;
-            let sy = (fx.y - gameState.camera.y) * viewTileSize;
-            let size = viewTileSize * 5 * (1 - fx.timer / 0.5);
-            ctx.globalAlpha = fx.timer / 0.5;
-            Renderer.drawEntity(ctx, 'explosion', sx - size / 2, sy - size / 2, size);
+            let sx = (fx.x - camX) * viewTileSize;
+            let sy = (fx.y - camY) * viewTileSize;
+            let progress = 1 - fx.timer / fx.maxTimer;
+            let frameIdx = Math.min(4, Math.floor(progress * 5));
+            let size = viewTileSize * 5 * (0.5 + progress * 0.5);
+            ctx.globalAlpha = fx.timer / fx.maxTimer;
+            if (Renderer.cache.explosion && Renderer.cache.explosion[frameIdx]) {
+                ctx.drawImage(Renderer.cache.explosion[frameIdx], sx - size / 2, sy - size / 2, size, size);
+            }
+            ctx.globalAlpha = 1;
+        } else if (fx.type === 'hit') {
+            let sx = (fx.x - camX) * viewTileSize;
+            let sy = (fx.y - camY) * viewTileSize;
+            ctx.globalAlpha = fx.timer / fx.maxTimer;
+            ctx.fillStyle = '#FFFFFF';
+            ctx.beginPath();
+            ctx.arc(sx, sy, viewTileSize * 0.3, 0, Math.PI * 2);
+            ctx.fill();
             ctx.globalAlpha = 1;
         }
     });
 
-    // 绘制本地玩家
+    // 本地玩家
     if (localPlayer.alive) {
-        let sx = (localPlayer.x - gameState.camera.x) * viewTileSize;
-        let sy = (localPlayer.y - gameState.camera.y) * viewTileSize;
+        let sx = (localPlayer.x - camX) * viewTileSize;
+        let sy = (localPlayer.y - camY) * viewTileSize;
         let sprite = gameState.myTeam === 'steve' ? 'steve' : (gameState.myMonster || 'zombie');
         Renderer.drawEntity(ctx, sprite, sx, sy, viewTileSize);
 
-        // 蓄力指示器
+        // 手持武器
+        if (gameState.myTeam === 'steve') {
+            Renderer.drawHeldWeapon(ctx, sx, sy, viewTileSize, localPlayer.lastWeapon, localPlayer.facingAngle);
+        }
+
+        // 名字
+        ctx.fillStyle = gameState.myTeam === 'steve' ? '#4ecca3' : '#ff6b6b';
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(gameState.myName, sx + viewTileSize / 2, sy - 5);
+
+        // 刀光
+        if (localPlayer.slashActive) {
+            let progress = 1 - localPlayer.slashTimer / 0.2;
+            Renderer.drawSlashEffect(ctx, sx, sy, viewTileSize, localPlayer.slashAngle, progress);
+        }
+
+        // 蓄力指示
         if (localPlayer.bowCharging) {
-            let charge = (Date.now() - localPlayer.bowChargeStart) / 1000 / GAME_CONFIG.BOW_CHARGE_TIME;
+            let charge = (Date.now() - localPlayer.bowChargeStart) / 1000 / CONFIG.BOW_CHARGE_TIME;
             charge = Math.min(charge, 1);
-            ctx.fillStyle = `rgba(52, 152, 219, ${0.5 + charge * 0.5})`;
-            ctx.fillRect(sx, sy + viewTileSize + 2, viewTileSize * charge, 3);
+            ctx.strokeStyle = `rgba(52,152,219,${0.5 + charge * 0.5})`;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(sx + viewTileSize / 2, sy + viewTileSize / 2, viewTileSize * 0.8, 0, Math.PI * 2 * charge);
+            ctx.stroke();
+            // 瞄准线
+            let aimLen = viewTileSize * 2;
+            let ax = Math.cos(localPlayer.aimAngle) * aimLen;
+            let ay = Math.sin(localPlayer.aimAngle) * aimLen;
+            ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+            ctx.setLineDash([3, 3]);
+            ctx.beginPath();
+            ctx.moveTo(sx + viewTileSize / 2, sy + viewTileSize / 2);
+            ctx.lineTo(sx + viewTileSize / 2 + ax, sy + viewTileSize / 2 + ay);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        // 击退闪烁
+        if (localPlayer.knockback) {
+            ctx.globalAlpha = 0.5 + Math.sin(Date.now() * 0.02) * 0.3;
+            ctx.fillStyle = 'rgba(255,0,0,0.2)';
+            ctx.fillRect(sx, sy, viewTileSize, viewTileSize);
+            ctx.globalAlpha = 1;
         }
     }
 }
 
-function drawHealthBar(ctx, x, y, width, hp, maxHp) {
+function drawEntityHP(ctx, sx, sy, size, hp, maxHp) {
+    if (hp >= maxHp) return;
+    let barW = size;
+    let barH = 3;
+    let barY = sy - 3;
     let ratio = hp / maxHp;
     ctx.fillStyle = '#333';
-    ctx.fillRect(x, y, width, 4);
+    ctx.fillRect(sx, barY, barW, barH);
     ctx.fillStyle = ratio > 0.5 ? '#4ecca3' : ratio > 0.25 ? '#f39c12' : '#e74c3c';
-    ctx.fillRect(x, y, width * ratio, 4);
+    ctx.fillRect(sx, barY, barW * ratio, barH);
 }
 
-// ============ HUD 更新 ============
+// ============ 小地图 ============
+
+function renderMinimap() {
+    let localData = {
+        x: localPlayer.x,
+        y: localPlayer.y,
+        id: gameState.myId,
+        team: gameState.myTeam,
+    };
+
+    // 合并AI怪物和鱼群给小地图显示
+    let allAI = (gameState.aiMonsters || []).concat(gameState.aiFish || []);
+
+    Renderer.drawMinimap(
+        minimapCtx,
+        gameState.map,
+        localData,
+        gameState.players,
+        allAI,
+        gameState.droppedItems,
+        CONFIG.MAP_SIZE,
+        CONFIG.MINIMAP_RANGE
+    );
+}
+
+// ============ HUD ============
 
 function updateHUD() {
-    let hpPercent = (localPlayer.hp / localPlayer.maxHp) * 100;
-    document.getElementById('health-fill').style.width = hpPercent + '%';
-    document.getElementById('health-text').textContent = `❤️ ${localPlayer.hp}/${localPlayer.maxHp}`;
+    updateHearts();
 
     if (gameState.myTeam === 'steve') {
         document.getElementById('weapon-info').textContent =
-            `🗡️ 铁剑 耐久:${localPlayer.swordDurability} | 🏹 箭:${localPlayer.arrows} | 🧪 药水:${localPlayer.potions}`;
-        document.getElementById('lives-info').textContent = `复活次数: ${localPlayer.lives}`;
+            `🗡️ 耐久:${localPlayer.swordDurability} | 🏹 箭:${localPlayer.arrows} | 🧪 药水:${localPlayer.potions}`;
+        document.getElementById('lives-info').textContent = `❤️ 复活:${localPlayer.lives}`;
     } else {
-        document.getElementById('weapon-info').textContent = `怪物: ${gameState.myMonster}`;
-        document.getElementById('lives-info').textContent = '无限复活';
+        let names = {zombie: '僵尸', skeleton: '骷髅', creeper: '苦力怕', fish: '鱼'};
+        document.getElementById('weapon-info').textContent = `👾 ${names[gameState.myMonster] || '怪物'}`;
+        document.getElementById('lives-info').textContent = '♾️ 无限复活';
     }
-}
-
-function updateTimer() {
-    let minutes = Math.floor(gameState.timeLeft / 60);
-    let seconds = Math.floor(gameState.timeLeft % 60);
-    document.getElementById('timer').textContent =
-        `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 }
 
 // ============ 游戏结束 ============
 
 function endGame(winner) {
+    if (gameState.phase === 'ended') return;
     gameState.phase = 'ended';
+
     let resultScreen = document.getElementById('result-screen');
     let resultText = document.getElementById('result-text');
     let resultDetail = document.getElementById('result-detail');
-
     resultScreen.style.display = 'flex';
 
     if (winner === 'steve') {
@@ -1035,7 +1397,7 @@ function endGame(winner) {
         } else {
             resultText.className = 'lose';
             resultText.textContent = '💀 失败...';
-            resultDetail.textContent = '史蒂夫存活了30分钟...';
+            resultDetail.textContent = '未能在30分钟内消灭史蒂夫';
         }
     } else {
         if (gameState.myTeam === 'monster') {
@@ -1045,22 +1407,48 @@ function endGame(winner) {
         } else {
             resultText.className = 'lose';
             resultText.textContent = '💀 失败...';
-            resultDetail.textContent = '所有史蒂夫都被消灭了...';
+            resultDetail.textContent = '所有史蒂夫被消灭了...';
         }
     }
+
+    NetworkManager.sendGameOver(winner);
 }
 
 function checkGameOver() {
-    // 检查是否所有史蒂夫都永久死亡
-    let stevesAlive = Object.values(gameState.players).filter(p =>
-        p.team === 'steve' && p.lives > 0
-    ).length;
-
+    let stevesAlive = 0;
+    Object.values(gameState.players).forEach(p => {
+        if (p.team === 'steve' && (p.lives > 0 || p.alive) && !p.permaDead) stevesAlive++;
+    });
     if (gameState.myTeam === 'steve' && localPlayer.lives > 0) stevesAlive++;
-
-    if (stevesAlive === 0) {
-        endGame('monster');
-        NetworkManager.sendGameOver('monster');
-    }
+    if (stevesAlive === 0) endGame('monster');
 }
+
+// ============ 进入游戏 ============
+
+function enterGame(seed, timeLeft) {
+    gameState.phase = 'playing';
+    gameState.map = generateMap(seed);
+    gameState.timeLeft = timeLeft || CONFIG.GAME_DURATION;
+
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('game-screen').style.display = 'block';
+
+    if (gameState.myTeam === 'steve') {
+        localPlayer.x = CONFIG.MAP_SIZE / 2;
+        localPlayer.y = CONFIG.MAP_SIZE / 2;
+    } else {
+        let pos;
+        if (gameState.myMonster === 'fish') pos = getRandomWaterPos();
+        else pos = getRandomLandPos();
+        localPlayer.x = pos.x;
+        localPlayer.y = pos.y;
+    }
+
+    resizeCanvas();
+    updateHUD();
+    NetworkManager.syncPlayer();
+}
+
+// ===== 启动 =====
+document.addEventListener('DOMContentLoaded', initGame);
 
