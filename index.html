@@ -53,12 +53,9 @@
         .team-btn .desc { color: #888; font-size: 10px; margin-top: 2px; }
 
         .monster-select {
-            display: none;
-            flex-wrap: wrap;
-            justify-content: center;
-            gap: 8px;
-            margin-bottom: 12px;
-            max-width: 300px;
+            display: none; flex-wrap: wrap;
+            justify-content: center; gap: 8px;
+            margin-bottom: 12px; max-width: 300px;
         }
         .monster-select.show { display: flex; }
         .monster-btn {
@@ -90,8 +87,10 @@
         }
         .btn:hover { background: #3dbb94; transform: scale(1.05); }
         .btn:disabled { background: #555; cursor: not-allowed; transform: none; }
+        .btn-red { background: #e74c3c; color: white; }
+        .btn-red:hover { background: #c0392b; }
+        .btn-small { padding: 6px 14px; font-size: 12px; }
 
-        /* 规则面板 */
         .rules-panel {
             background: #2a2a4a; border-radius: 10px;
             padding: 12px; width: 90%; max-width: 400px;
@@ -160,7 +159,7 @@
             transform: translate(-50%, -50%);
         }
 
-        /* 攻击按钮 */
+        /* 史蒂夫按钮 */
         .action-btn {
             position: absolute; border-radius: 50%;
             display: flex; align-items: center; justify-content: center;
@@ -186,33 +185,43 @@
             border: 3px solid rgba(155,89,182,0.9);
         }
 
-        /* 弓瞄准摇杆 */
-        #aim-area {
-            display: none; position: absolute;
-            bottom: 60px; right: 85px;
-            width: 100px; height: 100px;
+        /* 怪物攻击按钮（单独一个大按钮）*/
+        #monster-attack-btn {
+            position: absolute;
+            bottom: 65px; right: 30px;
+            width: 70px; height: 70px;
+            background: rgba(231,76,60,0.7);
+            border: 3px solid rgba(231,76,60,0.9);
+            border-radius: 50%;
+            display: none;
+            align-items: center; justify-content: center;
+            color: white; font-weight: bold; font-size: 14px;
+            cursor: pointer;
         }
-        #aim-base {
-            width: 100px; height: 100px;
-            background: rgba(52,152,219,0.3);
-            border: 2px solid rgba(52,152,219,0.6);
-            border-radius: 50%; position: relative;
+
+        /* 弓箭蓄力条 */
+        #bow-charge-bar {
+            position: absolute;
+            bottom: 45px; right: 90px;
+            width: 58px; height: 8px;
+            background: #333; border-radius: 4px;
+            display: none; overflow: hidden;
         }
-        #aim-stick {
-            width: 30px; height: 30px;
-            background: rgba(52,152,219,0.8);
-            border-radius: 50%; position: absolute;
-            top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
-        }
-        #aim-charge {
-            position: absolute; bottom: -12px; left: 0;
-            width: 100px; height: 5px;
-            background: #333; border-radius: 3px;
-        }
-        #aim-charge-fill {
+        #bow-charge-fill {
             height: 100%; width: 0%;
-            background: #3498db; border-radius: 3px;
+            background: linear-gradient(90deg, #3498db, #2ecc71);
+            border-radius: 4px;
+            transition: width 0.05s;
+        }
+
+        /* 弓箭瞄准线提示 */
+        #aim-hint {
+            position: absolute;
+            bottom: 130px; right: 85px;
+            color: rgba(255,255,255,0.6);
+            font-size: 10px;
+            display: none;
+            pointer-events: none;
         }
 
         /* 死亡遮罩 */
@@ -222,8 +231,32 @@
             background: rgba(139,0,0,0.4);
             flex-direction: column; align-items: center;
             justify-content: center; color: white;
-            font-size: 26px; z-index: 50; pointer-events: none;
+            font-size: 26px; z-index: 50;
         }
+        #death-overlay .death-buttons {
+            display: flex; gap: 10px; margin-top: 15px;
+        }
+
+        /* 怪物切换面板（复活时显示）*/
+        #switch-panel {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 10px;
+        }
+        #switch-panel .switch-title {
+            color: #f39c12; font-size: 13px; margin-bottom: 8px;
+        }
+        #switch-panel .switch-options {
+            display: flex; gap: 8px;
+        }
+        #switch-panel .switch-btn {
+            padding: 6px 12px; border-radius: 6px;
+            background: #3a3a5a; border: 1px solid #555;
+            color: white; font-size: 11px; cursor: pointer;
+        }
+        #switch-panel .switch-btn:hover { border-color: #e74c3c; }
+        #switch-panel .switch-btn.active { border-color: #e74c3c; background: #4a2a2a; }
 
         /* 结算 */
         #result-screen {
@@ -283,45 +316,39 @@
 
         <div class="rules-panel">
             <h3>📖 游戏规则</h3>
-            <p style="margin-bottom:6px;">史蒂夫阵营需坚持30分钟，敌对生物阵营需消灭所有史蒂夫。</p>
-
+            <p style="margin-bottom:6px;">史蒂夫坚持30分钟获胜，敌对生物消灭所有史蒂夫获胜。</p>
             <h3>👤 史蒂夫</h3>
             <table>
                 <tr><td>血量</td><td>20（10颗心）</td></tr>
                 <tr><td>速度</td><td>5格/秒</td></tr>
-                <tr><td>护甲</td><td>铁甲 20%减伤</td></tr>
+                <tr><td>护甲</td><td>铁甲 50%减伤</td></tr>
                 <tr><td>复活</td><td>3次，中心村庄复活</td></tr>
                 <tr><td>回血</td><td>每10秒+1血</td></tr>
                 <tr><td>铁剑</td><td>伤害6，范围3格，间隔0.6秒，耐久200</td></tr>
                 <tr><td>弓箭</td><td>伤害2~8（蓄力），射程30格，箭速20格/秒</td></tr>
-                <tr><td>箭</td><td>上限64支</td></tr>
+                <tr><td>箭</td><td>上限64支，手动瞄准</td></tr>
                 <tr><td>药水</td><td>回复4血</td></tr>
-                <tr><td>补给</td><td>中心村庄，每5分钟补充一次</td></tr>
+                <tr><td>补给</td><td>中心村庄，每5分钟一次</td></tr>
             </table>
-
             <h3>👾 敌对生物</h3>
             <table>
-                <tr><td>僵尸</td><td>20血，伤害4，范围3格，速度6格/秒</td></tr>
-                <tr><td>骷髅</td><td>20血，伤害4，射程30格，速度6格/秒</td></tr>
-                <tr><td>苦力怕</td><td>20血，爆炸伤害1~20，速度6格/秒，自爆</td></tr>
+                <tr><td>僵尸</td><td>20血，伤害4，范围3格，速度4格/秒</td></tr>
+                <tr><td>骷髅</td><td>20血，伤害4，射程30格，速度4格/秒</td></tr>
+                <tr><td>苦力怕</td><td>20血，爆炸1~20伤害，速度4格/秒，自爆</td></tr>
                 <tr><td>鱼</td><td>10血，伤害10，范围3格，速度10格/秒，不可上岸</td></tr>
             </table>
-
-            <h3>⚔️ 战斗机制</h3>
+            <h3>⚔️ 战斗</h3>
             <table>
-                <tr><td>击退</td><td>被攻击后击退1.5格，0.2秒无法移动但能攻击</td></tr>
-                <tr><td>水中</td><td>所有非鱼单位减速70%</td></tr>
-                <tr><td>苦力怕</td><td>1格20伤，2格15，3格8，4格3，5格1</td></tr>
-                <tr><td>刷怪</td><td>每30秒在史蒂夫周围30~60格刷5个怪</td></tr>
-                <tr><td>鱼群</td><td>初始50条分散水域，10格内追踪，独立刷新</td></tr>
+                <tr><td>击退</td><td>受击变红+击退1.5格，0.2秒不能移动但能攻击</td></tr>
+                <tr><td>水中</td><td>非鱼减速70%</td></tr>
+                <tr><td>刷怪</td><td>每30秒在史蒂夫周围30~60格刷5个</td></tr>
+                <tr><td>鱼群</td><td>50条分散水域，10格内追踪</td></tr>
             </table>
-
             <h3>🎮 操作</h3>
             <table>
-                <tr><td>移动</td><td>WASD/摇杆</td></tr>
-                <tr><td>剑</td><td>J键/剑按钮（自动锁定）</td></tr>
-                <tr><td>弓</td><td>K键+鼠标瞄准/弓按钮摇杆瞄准</td></tr>
-                <tr><td>药水</td><td>L键/药水按钮</td></tr>
+                <tr><td>移动</td><td>WASD/摇杆（攻击不影响移动）</td></tr>
+                <tr><td>史蒂夫</td><td>J=剑 K=弓(按住蓄力+鼠标瞄准) L=药水</td></tr>
+                <tr><td>怪物</td><td>J=攻击 / 攻击按钮</td></tr>
             </table>
         </div>
     </div>
@@ -348,24 +375,35 @@
             </div>
         </div>
 
+        <!-- 史蒂夫按钮 -->
         <div class="action-btn" id="attack-btn">剑</div>
         <div class="action-btn" id="bow-btn">弓</div>
         <div class="action-btn" id="potion-btn">药水</div>
+        <div id="bow-charge-bar"><div id="bow-charge-fill"></div></div>
+        <div id="aim-hint">← 拖动瞄准 →</div>
 
-        <div id="aim-area">
-            <div id="aim-base">
-                <div id="aim-stick"></div>
-            </div>
-            <div id="aim-charge">
-                <div id="aim-charge-fill"></div>
-            </div>
-        </div>
+        <!-- 怪物按钮 -->
+        <div id="monster-attack-btn">攻击</div>
 
+        <!-- 死亡 -->
         <div id="death-overlay">
             <p>你死了！</p>
             <p id="respawn-timer" style="font-size:16px;">5秒后复活...</p>
+            <div id="switch-panel">
+                <p class="switch-title">切换怪物种类：</p>
+                <div class="switch-options">
+                    <div class="switch-btn" onclick="switchMonster('zombie')">僵尸</div>
+                    <div class="switch-btn" onclick="switchMonster('skeleton')">骷髅</div>
+                    <div class="switch-btn" onclick="switchMonster('creeper')">苦力怕</div>
+                    <div class="switch-btn" onclick="switchMonster('fish')">鱼</div>
+                </div>
+            </div>
+            <div class="death-buttons">
+                <button class="btn btn-small btn-red" onclick="exitToLobby()">退出</button>
+            </div>
         </div>
 
+        <!-- 结算 -->
         <div id="result-screen">
             <h1 id="result-text"></h1>
             <p id="result-detail" style="font-size:15px;"></p>
