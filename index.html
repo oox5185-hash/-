@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>鼠鼠与鱼</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #1a1a2e;
+            font-family: 'Microsoft YaHei', sans-serif;
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        /* 登录界面 */
+        #login-screen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+        }
+
+        #login-screen h1 {
+            color: #4ecca3;
+            font-size: 48px;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+
+        #login-screen .subtitle {
+            color: #a8a8a8;
+            margin-bottom: 40px;
+            font-size: 16px;
+        }
+
+        .team-select {
+            display: flex;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .team-btn {
+            width: 180px;
+            height: 220px;
+            border: 3px solid #333;
+            border-radius: 12px;
+            background: #2a2a4a;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s;
+        }
+
+        .team-btn:hover {
+            border-color: #4ecca3;
+            transform: scale(1.05);
+        }
+
+        .team-btn.selected {
+            border-color: #4ecca3;
+            background: #3a3a5a;
+            box-shadow: 0 0 20px rgba(78, 204, 163, 0.3);
+        }
+
+        .team-btn .icon {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 15px;
+        }
+
+        .team-btn .label {
+            color: white;
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .team-btn .desc {
+            color: #888;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+
+        /* 怪物选择 */
+        .monster-select {
+            display: none;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .monster-select.show {
+            display: flex;
+        }
+
+        .monster-btn {
+            width: 100px;
+            height: 120px;
+            border: 2px solid #333;
+            border-radius: 8px;
+            background: #2a2a4a;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s;
+        }
+
+        .monster-btn:hover {
+            border-color: #e74c3c;
+        }
+
+        .monster-btn.selected {
+            border-color: #e74c3c;
+            background: #4a2a2a;
+        }
+
+        .monster-btn .label {
+            color: white;
+            font-size: 14px;
+            margin-top: 8px;
+        }
+
+        /* 房间系统 */
+        .room-section {
+            margin-top: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .room-input {
+            background: #2a2a4a;
+            border: 2px solid #444;
+            border-radius: 8px;
+            color: white;
+            padding: 10px 20px;
+            font-size: 16px;
+            text-align: center;
+            width: 250px;
+        }
+
+        .room-input:focus {
+            outline: none;
+            border-color: #4ecca3;
+        }
+
+        .btn {
+            background: #4ecca3;
+            color: #1a1a2e;
+            border: none;
+            border-radius: 8px;
+            padding: 12px 30px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn:hover {
+            background: #3dbb94;
+            transform: scale(1.05);
+        }
+
+        .btn:disabled {
+            background: #555;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* 等待界面 */
+        #waiting-screen {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background: #1a1a2e;
+            color: white;
+        }
+
+        .player-list {
+            background: #2a2a4a;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px;
+            min-width: 300px;
+        }
+
+        .player-list h3 {
+            margin-bottom: 10px;
+            color: #4ecca3;
+        }
+
+        .player-item {
+            padding: 5px 0;
+            color: #ccc;
+        }
+
+        /* 游戏界面 */
+        #game-screen {
+            display: none;
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #game-canvas {
+            display: block;
+            background: #2d5a27;
+        }
+
+        /* HUD */
+        #hud {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 14px;
+            pointer-events: none;
+        }
+
+        .health-bar {
+            width: 200px;
+            height: 20px;
+            background: #333;
+            border: 2px solid #555;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 5px;
+        }
+
+        .health-fill {
+            height: 100%;
+            background: #e74c3c;
+            transition: width 0.3s;
+        }
+
+        .hud-info {
+            background: rgba(0,0,0,0.6);
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-bottom: 5px;
+        }
+
+        /* 计时器 */
+        #timer {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: white;
+            font-size: 24px;
+            background: rgba(0,0,0,0.6);
+            padding: 8px 15px;
+            border-radius: 6px;
+        }
+
+        /* 移动摇杆（手机端） */
+        #joystick-area {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            width: 150px;
+            height: 150px;
+        }
+
+        #joystick-base {
+            width: 120px;
+            height: 120px;
+            background: rgba(255,255,255,0.15);
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            position: relative;
+        }
+
+        #joystick-stick {
+            width: 50px;
+            height: 50px;
+            background: rgba(255,255,255,0.4);
+            border-radius: 50%;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        /* 攻击按钮 */
+        #attack-btn {
+            position: absolute;
+            bottom: 80px;
+            right: 30px;
+            width: 70px;
+            height: 70px;
+            background: rgba(231, 76, 60, 0.7);
+            border: 3px solid rgba(231, 76, 60, 0.9);
+            border-radius: 50%;
+            color: white;
+            font-size: 14px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        #bow-btn {
+            position: absolute;
+            bottom: 80px;
+            right: 120px;
+            width: 70px;
+            height: 70px;
+            background: rgba(52, 152, 219, 0.7);
+            border: 3px solid rgba(52, 152, 219, 0.9);
+            border-radius: 50%;
+            color: white;
+            font-size: 14px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        #potion-btn {
+            position: absolute;
+            bottom: 160px;
+            right: 30px;
+            width: 60px;
+            height: 60px;
+            background: rgba(155, 89, 182, 0.7);
+            border: 3px solid rgba(155, 89, 182, 0.9);
+            border-radius: 50%;
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        /* 结算界面 */
+        #result-screen {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            z-index: 100;
+        }
+
+        #result-screen h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+
+        .win {
+            color: #4ecca3;
+        }
+
+        .lose {
+            color: #e74c3c;
+        }
+
+        /* 死亡提示 */
+        #death-overlay {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(139, 0, 0, 0.5);
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 32px;
+            z-index: 50;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <!-- 登录界面 -->
+    <div id="login-screen">
+        <h1>🐭 鼠鼠与鱼 🐟</h1>
+        <p class="subtitle">方块生存对战</p>
+
+        <div class="team-select">
+            <div class="team-btn" id="btn-steve" onclick="selectTeam('steve')">
+                <canvas class="icon" id="steve-icon" width="80" height="80"></canvas>
+                <span class="label">史蒂夫</span>
+                <span class="desc">生存30分钟获胜</span>
+            </div>
+            <div class="team-btn" id="btn-monster" onclick="selectTeam('monster')">
+                <canvas class="icon" id="monster-icon" width="80" height="80"></canvas>
+                <span class="label">敌对生物</span>
+                <span class="desc">消灭所有史蒂夫</span>
+            </div>
+        </div>
+
+        <div class="monster-select" id="monster-select">
+            <div class="monster-btn" onclick="selectMonster('zombie')">
+                <canvas width="60" height="60" id="zombie-icon"></canvas>
+                <span class="label">僵尸</span>
+            </div>
+            <div class="monster-btn" onclick="selectMonster('skeleton')">
+                <canvas width="60" height="60" id="skeleton-icon"></canvas>
+                <span class="label">骷髅</span>
+            </div>
+            <div class="monster-btn" onclick="selectMonster('creeper')">
+                <canvas width="60" height="60" id="creeper-icon"></canvas>
+                <span class="label">苦力怕</span>
+            </div>
+            <div class="monster-btn" onclick="selectMonster('fish')">
+                <canvas width="60" height="60" id="fish-icon"></canvas>
+                <span class="label">鱼</span>
+            </div>
+        </div>
+
+        <div class="room-section">
+            <input class="room-input" id="room-input" placeholder="输入房间号（或留空创建）">
+            <input class="room-input" id="name-input" placeholder="输入你的名字">
+            <button class="btn" id="join-btn" onclick="joinGame()" disabled>加入游戏</button>
+        </div>
+    </div>
+
+    <!-- 等待界面 -->
+    <div id="waiting-screen">
+        <h2>等待玩家中...</h2>
+        <p id="room-code-display" style="color:#4ecca3; font-size:20px; margin:10px;"></p>
+        <div class="player-list" id="player-list">
+            <h3>已加入的玩家：</h3>
+            <div id="player-list-content"></div>
+        </div>
+        <p id="waiting-info" style="color:#888;">需要至少1个史蒂夫才能开始</p>
+        <button class="btn" id="start-btn" onclick="startGame()" style="display:none;">开始游戏</button>
+    </div>
+
+    <!-- 游戏界面 -->
+    <div id="game-screen">
+        <canvas id="game-canvas"></canvas>
+
+        <div id="hud">
+            <div class="hud-info">
+                <div class="health-bar">
+                    <div class="health-fill" id="health-fill" style="width:100%"></div>
+                </div>
+                <span id="health-text">❤️ 20/20</span>
+            </div>
+            <div class="hud-info" id="weapon-info">
+                🗡️ 铁剑 耐久: 200 | 🏹 箭: 64 | 🧪 药水: 1
+            </div>
+            <div class="hud-info" id="lives-info">
+                复活次数: 3
+            </div>
+        </div>
+
+        <div id="timer">30:00</div>
+
+        <!-- 手机控制 -->
+        <div id="joystick-area">
+            <div id="joystick-base">
+                <div id="joystick-stick"></div>
+            </div>
+        </div>
+
+        <div id="attack-btn">剑</div>
+        <div id="bow-btn">弓</div>
+        <div id="potion-btn">药水</div>
+
+        <!-- 死亡遮罩 -->
+        <div id="death-overlay">
+            <p>你死了！</p>
+            <p id="respawn-timer">5秒后复活...</p>
+        </div>
+
+        <!-- 结算 -->
+        <div id="result-screen">
+            <h1 id="result-text"></h1>
+            <p id="result-detail"></p>
+            <button class="btn" onclick="location.reload()" style="margin-top:20px;">返回大厅</button>
+        </div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+
+    <script>
+        // Firebase 配置
+        const firebaseConfig = {
+            apiKey: "AIzaSyBq9z4n2ZG-Gh4OxJfPr3WjDyNnfeYEs1I",
+            authDomain: "mouse-and-fish.firebaseapp.com",
+            databaseURL: "https://mouse-and-fish-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "mouse-and-fish",
+            storageBucket: "mouse-and-fish.firebasestorage.app",
+            messagingSenderId: "1014203497732",
+            appId: "1:1014203497732:web:048c4ae8e276c100566451"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+    </script>
+    <script src="renderer.js"></script>
+    <script src="game.js"></script>
+    <script src="network.js"></script>
+
+</body>
+</html>
+
