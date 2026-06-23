@@ -2,9 +2,8 @@
 
 const CONFIG = {
     MAP_SIZE: 500,
-    GAME_DURATION: 30 * 60,
+    GAME_DURATION: 10 * 60,
     MAX_PLAYERS: 30,
-    MAX_STEVE: 3,
 
     STEVE_SPEED: 5,
     ZOMBIE_SPEED: 4,
@@ -29,7 +28,7 @@ const CONFIG = {
     BOW_CHARGE_TIME: 1,
     BOW_COOLDOWN: 0.2,
     ARROW_SPEED: 20,
-    MAX_ARROWS: 64,
+    MAX_ARROWS: 128,
 
     POTION_HEAL: 4,
     SUPPLY_COOLDOWN: 300,
@@ -42,7 +41,6 @@ const CONFIG = {
     SKELETON_DAMAGE: 4,
     SKELETON_RANGE: 30,
     SKELETON_COOLDOWN: 0.5,
-    SKELETON_CHARGE_TIME: 1,
     CREEPER_HP: 20,
     FISH_HP: 10,
     FISH_DAMAGE: 10,
@@ -54,6 +52,7 @@ const CONFIG = {
 
     MONSTER_RESPAWN: 5,
     MINIMAP_RANGE: 60,
+    AI_MAX: 30,
 };
 
 const CREEPER_DMG = {1: 20, 2: 15, 3: 8, 4: 3, 5: 1};
@@ -87,7 +86,7 @@ let localPlayer = {
     x: 250, y: 250,
     hp: 20, maxHp: 20,
     lives: 3,
-    arrows: 64,
+    arrows: 128,
     potions: 1,
     swordDurability: 200,
     alive: true,
@@ -110,9 +109,6 @@ let localPlayer = {
     slashAngle: 0,
     aimAngle: 0,
     facingAngle: 0,
-    // 骷髅蓄力
-    skeletonCharging: false,
-    skeletonChargeStart: 0,
 };
 
 let input = {
@@ -763,7 +759,6 @@ function getAllEntities(){
     (gameState.aiFish||[]).forEach(f=>{if(f.alive)e.push(f);});
     return e;
 }
-
 // ============ 受伤/击退/死亡 ============
 
 function takeDamage(amount, fromAngle) {
@@ -797,10 +792,6 @@ function applyKnockback(fromAngle) {
 }
 
 function handleDeath() {
-    // 取消骷髅蓄力
-    localPlayer.skeletonCharging = false;
-    document.getElementById('skeleton-charge-bar').style.display='none';
-
     if (gameState.myTeam === 'steve') {
         localPlayer.lives--;
         NetworkManager.sendDrop(localPlayer.x, localPlayer.y, {
@@ -848,7 +839,6 @@ function respawn() {
     localPlayer.knockback = false;
     localPlayer.knockbackTimer = 0;
     localPlayer.hitFlash = 0;
-    localPlayer.skeletonCharging = false;
 
     if (gameState.myTeam === 'steve') {
         localPlayer.x = CONFIG.MAP_SIZE / 2;
@@ -1002,7 +992,6 @@ function update(dt) {
         if (localPlayer.slashTimer <= 0) localPlayer.slashActive = false;
     }
 
-    // 骷髅自动蓄力射击
     skeletonAutoShoot();
 
     // 回血
@@ -1310,7 +1299,7 @@ function endGame(winner) {
     if (winner === 'steve') {
         rt.className = gameState.myTeam === 'steve' ? 'win' : 'lose';
         rt.textContent = gameState.myTeam === 'steve' ? '🎉 胜利！' : '💀 失败...';
-        rd.textContent = gameState.myTeam === 'steve' ? '成功存活30分钟！' : '未能消灭史蒂夫';
+        rd.textContent = gameState.myTeam === 'steve' ? '成功存活10分钟！' : '未能消灭史蒂夫';
     } else {
         rt.className = gameState.myTeam === 'monster' ? 'win' : 'lose';
         rt.textContent = gameState.myTeam === 'monster' ? '🎉 胜利！' : '💀 失败...';
@@ -1369,3 +1358,4 @@ function enterGame(seed, timeLeft) {
 
 // ===== 启动 =====
 document.addEventListener('DOMContentLoaded', initGame);
+
