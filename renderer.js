@@ -30,7 +30,6 @@ const Renderer = {
         return c;
     },
 
-    // ===== 草方块（纯俯视角，全绿）=====
     createGrassTile() {
         const c = this.newCanvas(16, 16);
         const x = c.getContext('2d');
@@ -56,7 +55,6 @@ const Renderer = {
         this.cache.grass = c;
     },
 
-    // ===== 沙子方块（海岸过渡）=====
     createSandTile() {
         const c = this.newCanvas(16, 16);
         const x = c.getContext('2d');
@@ -78,7 +76,6 @@ const Renderer = {
         this.cache.sand = c;
     },
 
-    // ===== 水方块（4帧）=====
     createWaterTiles() {
         this.cache.water = [];
         for (let frame = 0; frame < 4; frame++) {
@@ -104,7 +101,6 @@ const Renderer = {
         }
     },
 
-    // ===== 角色 =====
     createSteve() {
         const c = this.newCanvas(16, 16);
         const x = c.getContext('2d');
@@ -173,7 +169,6 @@ const Renderer = {
         this.cache.fish = c;
     },
 
-    // ===== 物品 =====
     createSword() {
         const c = this.newCanvas(16, 16);
         const x = c.getContext('2d');
@@ -241,7 +236,6 @@ const Renderer = {
         x.fillStyle='#FFD700'; x.fillRect(25,42,1,1);
         x.fillStyle='#87CEEB'; x.fillRect(10,5,4,2); x.fillRect(34,5,4,2);
         x.fillStyle='#C8A050'; x.fillRect(7,7,34,34);
-        ctx2 = x;
         if(this.cache.chest) x.drawImage(this.cache.chest,0,0,16,16,16,16,16,16);
         this.cache.villageHouse = c;
     },
@@ -315,7 +309,6 @@ const Renderer = {
         ctx.restore();
     },
 
-    // 刀光（60度扇形）
     drawSlashEffect(ctx, sx, sy, size, angle, progress) {
         ctx.save();
         ctx.translate(sx + size/2, sy + size/2);
@@ -340,7 +333,6 @@ const Renderer = {
         ctx.restore();
     },
 
-    // 箭飞行
     drawArrow(ctx, sx, sy, size, angle) {
         ctx.save();
         ctx.translate(sx, sy);
@@ -350,7 +342,6 @@ const Renderer = {
         ctx.restore();
     },
 
-    // 箭轨迹（白色虚线）
     drawArrowTrail(ctx, points, camX, camY, tileSize) {
         if (points.length < 2) return;
         ctx.save();
@@ -370,7 +361,6 @@ const Renderer = {
         ctx.restore();
     },
 
-    // MC心形血量
     drawHearts(ctx, hp, maxHp, startX, startY) {
         let total = Math.ceil(maxHp / 2);
         for (let i = 0; i < total; i++) {
@@ -384,8 +374,8 @@ const Renderer = {
         }
     },
 
-    // 小地图
-    drawMinimap(ctx, map, localPlayer, players, aiAll, drops, mapSize, range) {
+    // 小地图（增加敌对生物方向箭头）
+    drawMinimap(ctx, map, localPlayer, players, aiAll, drops, mapSize, range, isMonsterTeam) {
         const w = 110, h = 110;
         ctx.fillStyle = 'rgba(0,0,0,0.8)';
         ctx.fillRect(0, 0, w, h);
@@ -426,10 +416,32 @@ const Renderer = {
         Object.values(players).forEach(p=>{
             if(p.id===localPlayer.id||!p.alive) return;
             let pdx=p.x-cx,pdy=p.y-cy;
-            if(Math.abs(pdx)>=range||Math.abs(pdy)>=range) return;
-            let sx=(pdx+range)*scale,sy=(pdy+range)*scale;
-            ctx.fillStyle = p.team===localPlayer.team?'#4ecca3':'#e74c3c';
-            ctx.beginPath(); ctx.arc(sx,sy,3,0,Math.PI*2); ctx.fill();
+            let inRange = Math.abs(pdx)<range&&Math.abs(pdy)<range;
+
+            if(inRange){
+                let sx=(pdx+range)*scale,sy=(pdy+range)*scale;
+                ctx.fillStyle = p.team===localPlayer.team?'#4ecca3':'#e74c3c';
+                ctx.beginPath(); ctx.arc(sx,sy,3,0,Math.PI*2); ctx.fill();
+            }
+
+            // 敌对生物玩家：显示Steve方向箭头（无论距离）
+            if(isMonsterTeam && p.team==='steve' && !inRange){
+                let ang = Math.atan2(pdy, pdx);
+                let edgeX = w/2 + Math.cos(ang)*(w/2-8);
+                let edgeY = h/2 + Math.sin(ang)*(h/2-8);
+                // 画三角箭头
+                ctx.save();
+                ctx.translate(edgeX, edgeY);
+                ctx.rotate(ang);
+                ctx.fillStyle='#ff4444';
+                ctx.beginPath();
+                ctx.moveTo(6,0);
+                ctx.lineTo(-4,-4);
+                ctx.lineTo(-4,4);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            }
         });
 
         // AI
@@ -447,7 +459,48 @@ const Renderer = {
         ctx.strokeStyle='#555'; ctx.lineWidth=1; ctx.strokeRect(0,0,w,h);
     },
 
-    // 受击红闪
+    // 全图绘制
+    drawFullMap(ctx, canvasW, canvasH, map, localPlayer, players, aiAll, mapSize, isMonsterTeam) {
+        ctx.fillStyle = '#111';
+        ctx.fillRect(0, 0, canvasW, canvasH);
+        let scale = canvasW / mapSize;
+
+        // 地形（大步长）
+        let step = Math.max(2, Math.floor(mapSize / canvasW));
+        for (let y = 0; y < mapSize; y += step) {
+            for (let x = 0; x < mapSize; x += step) {
+                let tile = map[y] && map[y][x];
+                ctx.fillStyle = tile===1?'#1E3A7A': tile===2?'#DCC890':'#3D7A25';
+                ctx.fillRect(x*scale, y*scale, step*scale+1, step*scale+1);
+            }
+        }
+
+        // 补给点
+        let ctr = mapSize/2;
+        ctx.fillStyle='#FFD700';
+        ctx.fillRect(ctr*scale-3,ctr*scale-3,6,6);
+
+        // 玩家
+        Object.values(players).forEach(p=>{
+            if(!p.alive) return;
+            let sx=p.x*scale, sy=p.y*scale;
+            if(p.id===localPlayer.id){
+                ctx.fillStyle='#FFFFFF';
+                ctx.beginPath(); ctx.arc(sx,sy,4,0,Math.PI*2); ctx.fill();
+            } else {
+                ctx.fillStyle = p.team===localPlayer.team?'#4ecca3':'#e74c3c';
+                ctx.beginPath(); ctx.arc(sx,sy,3,0,Math.PI*2); ctx.fill();
+            }
+        });
+
+        // 自己（如果不在players里）
+        let sx2=localPlayer.x*scale, sy2=localPlayer.y*scale;
+        ctx.fillStyle='#FFFFFF';
+        ctx.beginPath(); ctx.arc(sx2,sy2,4,0,Math.PI*2); ctx.fill();
+
+        ctx.strokeStyle='#555'; ctx.lineWidth=1; ctx.strokeRect(0,0,canvasW,canvasH);
+    },
+
     drawHitFlash(ctx, sx, sy, size, alpha) {
         ctx.fillStyle = `rgba(255,0,0,${alpha})`;
         ctx.fillRect(sx, sy, size, size);
