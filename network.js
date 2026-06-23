@@ -134,7 +134,6 @@ const NetworkManager = {
         this.myRef.onDisconnect().remove();
     },
 
-    // ===== 更新怪物种类（切换用）=====
     updateMonsterType(type) {
         if (this.myRef) {
             this.myRef.update({ monster: type });
@@ -143,9 +142,25 @@ const NetworkManager = {
 
     // ===== 监听 =====
     setupListeners() {
+        // 玩家变化监听（含加入提示）
         this.playersRef.on('value', snapshot => {
             let players = snapshot.val() || {};
+            let currentIds = Object.keys(players);
+            let previousIds = gameState.previousPlayerIds || [];
+
+            // 检测新加入的玩家
+            currentIds.forEach(id => {
+                if (!previousIds.includes(id) && id !== gameState.myId) {
+                    let p = players[id];
+                    if (p && p.name) {
+                        showJoinToast(p.name);
+                    }
+                }
+            });
+
+            gameState.previousPlayerIds = currentIds;
             gameState.players = players;
+            updatePlayerCount();
             if (gameState.phase === 'playing') this.checkSteveStatus();
         });
 
