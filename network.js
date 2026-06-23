@@ -6,10 +6,26 @@ const NetworkManager = {
     eventsRef: null,
     dropsRef: null,
     aiRef: null,
+    fishRef: null,
     myRef: null,
     isHost: false,
     aiSpawnInterval: null,
+    aiBehaviorInterval: null,
+    fishCheckInterval: null,
     syncThrottle: 0,
+
+    // 鱼的配置
+    FISH_TOTAL: 50,
+    FISH_AGGRO_RANGE: 10,
+    FISH_WANDER_SPEED: 3,
+
+    // 怪物配置
+    MONSTER_SPAWN_INTERVAL: 30,  // 30秒一波
+    MONSTER_SPAWN_COUNT: 5,      // 每个史蒂夫周围5个
+    MONSTER_SPAWN_MIN: 30,       // 最近30格
+    MONSTER_SPAWN_MAX: 60,       // 最远60格
+    MONSTER_AGGRO_RANGE: 60,     // 60格内追踪
+    MONSTER_WANDER_SPEED: 2,     // 自由移动速度
 
     // ===== 自动匹配房间 =====
     autoJoin(playerData) {
@@ -20,14 +36,12 @@ const NetworkManager = {
             let bestRoom = null;
             let bestCount = 0;
 
-            // 找人最多但没满的房间
             Object.entries(rooms).forEach(([roomId, roomData]) => {
                 if (!roomData.players) return;
                 let playerCount = Object.keys(roomData.players).length;
-                let state = roomData.state;
 
-                // 可以加入正在进行的游戏
                 if (playerCount >= CONFIG.MAX_PLAYERS) return;
+                if (roomData.state === 'ended') return;
 
                 // 检查史蒂夫名额
                 if (playerData.team === 'steve') {
@@ -44,7 +58,6 @@ const NetworkManager = {
             if (bestRoom) {
                 this.joinRoom(bestRoom, playerData);
             } else {
-                // 创建新房间
                 let newRoomId = this.generateRoomId();
                 this.createRoom(newRoomId, playerData);
             }
@@ -66,11 +79,11 @@ const NetworkManager = {
         this.eventsRef = this.roomRef.child('events');
         this.dropsRef = this.roomRef.child('drops');
         this.aiRef = this.roomRef.child('ai');
+        this.fishRef = this.roomRef.child('fish');
 
         let seed = Math.floor(Math.random() * 999999);
         let now = Date.now();
 
-        // 写入房间数据
         this.roomRef.set({
             seed: seed,
             state: 'playing',
@@ -79,17 +92,15 @@ const NetworkManager = {
             host: gameState.myId,
         });
 
-        // 写入自己
         this.addPlayer(playerData);
-
-        // 监听
         this.setupListeners();
-
-        // 开始游戏
         enterGame(seed, CONFIG.GAME_DURATION);
 
-        // 刷怪
+        // Host职责：刷怪 + AI行为 + 鱼群管理
         this.startAISpawner();
+        this.startAIBehavior();
+        this.initFish();
+        this.startFishManager();
     },
 
     // ===== 加入房间 =====
@@ -102,15 +113,13 @@ const NetworkManager = {
         this.eventsRef = this.roomRef.child('events');
         this.dropsRef = this.roomRef.child('drops');
         this.aiRef = this.roomRef.child('ai');
+        this.fishRef = this.roomRef.child('fish');
 
-        // 加入玩家
         this.addPlayer(playerData);
 
-        // 获取房间数据后开始
         this.roomRef.once('value', snapshot => {
             let data = snapshot.val();
             if (!data) {
-                // 房间不存在，创建新的
                 this.createRoom(roomId, playerData);
                 return;
             }
@@ -121,24 +130,18 @@ const NetworkManager = {
             let timeLeft = CONFIG.GAME_DURATION - elapsed;
 
             if (timeLeft <= 0) {
-                // 游戏已结束，创建新房间
                 let newId = this.generateRoomId();
                 this.createRoom(newId, playerData);
                 return;
             }
 
-            // 监听
             this.setupListeners();
-
-            // 中途加入
             enterGame(seed, timeLeft);
-
-            // 检查是否需要接管刷怪
             this.checkHostDuty();
         });
     },
 
-    // ===== 添加玩家到房间 =====
+    // ===== 添加玩家 =====
     addPlayer(playerData) {
         this.myRef = this.playersRef.child(gameState.myId);
         this.myRef.set({
@@ -156,33 +159,28 @@ const NetworkManager = {
             facingAngle: 0,
             joinedAt: Date.now(),
         });
-
-        // 断线自动清除
         this.myRef.onDisconnect().remove();
     },
 
-    // ===== 设置监听器 =====
+    // ===== 监听器 =====
     setupListeners() {
-        // 监听玩家变化
+        // 玩家列表
         this.playersRef.on('value', snapshot => {
             let players = snapshot.val() || {};
             gameState.players = players;
-
-            // 检查游戏结束
             if (gameState.phase === 'playing') {
                 this.checkSteveStatus();
             }
         });
 
-        // 监听伤害事件
+        // 事件
         this.eventsRef.on('child_added', snapshot => {
             let event = snapshot.val();
             if (event) this.handleEvent(event);
-            // 处理后删除（延迟删除防止多次读取）
             setTimeout(() => snapshot.ref.remove(), 500);
         });
 
-        // 监听掉落物
+        // 掉落物
         this.dropsRef.on('value', snapshot => {
             gameState.droppedItems = [];
             let drops = snapshot.val() || {};
@@ -192,13 +190,19 @@ const NetworkManager = {
             });
         });
 
-        // 监听AI怪物
+        // AI怪物
         this.aiRef.on('value', snapshot => {
             let monsters = snapshot.val() || {};
             gameState.aiMonsters = Object.values(monsters).filter(m => m && m.alive);
         });
 
-        // 监听游戏结束
+        // 鱼群
+        this.fishRef.on('value', snapshot => {
+            let fishData = snapshot.val() || {};
+            gameState.aiFish = Object.values(fishData).filter(f => f && f.alive);
+        });
+
+        // 游戏结束
         this.roomRef.child('winner').on('value', snapshot => {
             let winner = snapshot.val();
             if (winner && gameState.phase === 'playing') {
@@ -206,19 +210,16 @@ const NetworkManager = {
             }
         });
 
-        // 监听host变化（如果host掉线需要接管）
+        // Host监控
         this.roomRef.child('host').on('value', snapshot => {
             let hostId = snapshot.val();
-            if (!hostId) {
-                this.tryBecomeHost();
-            }
+            if (!hostId) this.tryBecomeHost();
         });
     },
 
-    // ===== 同步本地玩家状态 =====
+    // ===== 同步玩家 =====
     syncPlayer() {
         if (!this.myRef || !gameState.myId) return;
-
         let now = Date.now();
         if (now - this.syncThrottle < 80) return;
         this.syncThrottle = now;
@@ -234,7 +235,7 @@ const NetworkManager = {
         });
     },
 
-    // ===== 发送伤害 =====
+    // ===== 发送事件 =====
     sendDamage(targetId, damage, angle) {
         this.eventsRef.push({
             type: 'damage',
@@ -246,7 +247,6 @@ const NetworkManager = {
         });
     },
 
-    // ===== 发送箭矢 =====
     sendProjectile(arrow) {
         this.eventsRef.push({
             type: 'projectile',
@@ -262,18 +262,15 @@ const NetworkManager = {
         });
     },
 
-    // ===== 发送爆炸 =====
     sendExplosion(x, y) {
         this.eventsRef.push({
             type: 'explosion',
-            x: x,
-            y: y,
+            x: x, y: y,
             from: gameState.myId,
             t: Date.now(),
         });
     },
 
-    // ===== 发送掉落物 =====
     sendDrop(x, y, items) {
         this.dropsRef.push({
             x: Math.round(x * 10) / 10,
@@ -285,25 +282,16 @@ const NetworkManager = {
         });
     },
 
-    // ===== 移除掉落物 =====
     removeDroppedItem(itemId) {
-        if (this.dropsRef) {
-            this.dropsRef.child(itemId).remove();
-        }
+        if (this.dropsRef) this.dropsRef.child(itemId).remove();
     },
 
-    // ===== 永久死亡 =====
     sendPermaDeath() {
         if (this.myRef) {
-            this.myRef.update({
-                alive: false,
-                lives: 0,
-                permaDead: true,
-            });
+            this.myRef.update({ alive: false, lives: 0, permaDead: true });
         }
     },
 
-    // ===== 游戏结束 =====
     sendGameOver(winner) {
         if (this.roomRef) {
             this.roomRef.child('winner').set(winner);
@@ -311,11 +299,9 @@ const NetworkManager = {
         }
     },
 
-    // ===== 处理网络事件 =====
+    // ===== 事件处理 =====
     handleEvent(event) {
         if (!event || !event.type) return;
-
-        // 忽略过时事件（超过3秒）
         if (Date.now() - event.t > 3000) return;
 
         switch (event.type) {
@@ -332,26 +318,25 @@ const NetworkManager = {
     },
 
     onDamageEvent(event) {
-        // 是否打到自己
         if (event.target === gameState.myId && event.from !== gameState.myId) {
             takeDamage(event.damage, event.angle);
         }
-
-        // 是否打到AI怪物（host处理）
+        // AI怪物受伤
         if (this.isHost && event.target && event.target.startsWith('ai_')) {
             this.damageAI(event.target, event.damage, event.angle);
+        }
+        // 鱼受伤
+        if (this.isHost && event.target && event.target.startsWith('fish_')) {
+            this.damageFish(event.target, event.damage, event.angle);
         }
     },
 
     onProjectileEvent(event) {
         if (event.owner === gameState.myId) return;
-
         gameState.projectiles.push({
             id: event.owner + '_' + event.t,
-            x: event.x,
-            y: event.y,
-            dirX: event.dirX,
-            dirY: event.dirY,
+            x: event.x, y: event.y,
+            dirX: event.dirX, dirY: event.dirY,
             damage: event.damage,
             speed: event.speed,
             owner: event.owner,
@@ -363,17 +348,11 @@ const NetworkManager = {
 
     onExplosionEvent(event) {
         if (event.from === gameState.myId) return;
-
-        // 特效
         gameState.effects.push({
             type: 'explosion',
-            x: event.x,
-            y: event.y,
-            timer: 0.5,
-            maxTimer: 0.5,
+            x: event.x, y: event.y,
+            timer: 0.5, maxTimer: 0.5,
         });
-
-        // 自己是否受伤
         if (localPlayer.alive) {
             let dist = distBetween(localPlayer.x, localPlayer.y, event.x, event.y);
             let gridDist = Math.ceil(dist);
@@ -384,95 +363,232 @@ const NetworkManager = {
         }
     },
 
-    // ===== AI怪物管理（只有host执行）=====
-
+    // ===== 怪物刷新（每30秒，在每个史蒂夫周围30~60格）=====
     startAISpawner() {
         if (this.aiSpawnInterval) clearInterval(this.aiSpawnInterval);
 
         this.aiSpawnInterval = setInterval(() => {
-            if (gameState.phase !== 'playing') return;
-            if (!this.isHost) return;
+            if (gameState.phase !== 'playing' || !this.isHost) return;
+            this.spawnMonstersAroundSteves();
+        }, this.MONSTER_SPAWN_INTERVAL * 1000);
 
-            this.spawnAIBatch();
-        }, CONFIG.AI_SPAWN_INTERVAL * 1000);
-
-        // 首次立刻刷一批
-        setTimeout(() => this.spawnAIBatch(), 3000);
+        // 首次3秒后刷
+        setTimeout(() => {
+            if (this.isHost) this.spawnMonstersAroundSteves();
+        }, 3000);
     },
 
-    spawnAIBatch() {
-        let types = ['zombie', 'skeleton', 'creeper', 'fish'];
+    spawnMonstersAroundSteves() {
+        let steves = Object.values(gameState.players).filter(p => p.team === 'steve' && p.alive);
+        if (steves.length === 0) return;
 
-        for (let i = 0; i < CONFIG.AI_SPAWN_COUNT; i++) {
-            let type = types[Math.floor(Math.random() * types.length)];
-            let pos;
-            if (type === 'fish') {
-                pos = getRandomWaterPos();
-            } else {
-                pos = getRandomLandPos();
+        let types = ['zombie', 'skeleton', 'creeper'];
+
+        steves.forEach(steve => {
+            for (let i = 0; i < this.MONSTER_SPAWN_COUNT; i++) {
+                let type = types[Math.floor(Math.random() * types.length)];
+                let pos = this.getRandomPosAround(steve.x, steve.y, this.MONSTER_SPAWN_MIN, this.MONSTER_SPAWN_MAX, false);
+                if (!pos) continue;
+
+                let hp = 20;
+                let id = 'ai_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+
+                this.aiRef.child(id).set({
+                    id: id,
+                    type: type,
+                    x: pos.x,
+                    y: pos.y,
+                    hp: hp,
+                    maxHp: hp,
+                    alive: true,
+                    wanderAngle: Math.random() * Math.PI * 2,
+                    wanderTimer: 0,
+                    spawnTime: Date.now(),
+                });
+            }
+        });
+    },
+
+    // 在指定位置周围随机生成位置
+    getRandomPosAround(cx, cy, minDist, maxDist, requireWater) {
+        let attempts = 0;
+        while (attempts < 50) {
+            let angle = Math.random() * Math.PI * 2;
+            let dist = minDist + Math.random() * (maxDist - minDist);
+            let x = Math.floor(cx + Math.cos(angle) * dist);
+            let y = Math.floor(cy + Math.sin(angle) * dist);
+
+            if (x < 0 || x >= CONFIG.MAP_SIZE || y < 0 || y >= CONFIG.MAP_SIZE) {
+                attempts++;
+                continue;
             }
 
-            let hp = type === 'fish' ? CONFIG.FISH_HP : 20;
-            let id = 'ai_' + Date.now() + '_' + i;
+            let tile = gameState.map[y] && gameState.map[y][x];
+            if (requireWater && tile !== 1) { attempts++; continue; }
+            if (!requireWater && tile === 1) { attempts++; continue; }
 
-            this.aiRef.child(id).set({
+            return {x, y};
+            attempts++;
+        }
+        return null;
+    },
+
+    // ===== 鱼群管理 =====
+
+    // 初始化50条鱼，分散在水域
+    initFish() {
+        let fishData = {};
+        for (let i = 0; i < this.FISH_TOTAL; i++) {
+            let pos = getRandomWaterPos();
+            let id = 'fish_' + i;
+            fishData[id] = {
                 id: id,
-                type: type,
+                type: 'fish',
                 x: pos.x,
                 y: pos.y,
-                hp: hp,
-                maxHp: hp,
+                hp: CONFIG.FISH_HP,
+                maxHp: CONFIG.FISH_HP,
                 alive: true,
-                spawnTime: Date.now(),
+                wanderAngle: Math.random() * Math.PI * 2,
+                wanderTimer: Math.random() * 3,
+            };
+        }
+        this.fishRef.set(fishData);
+    },
+
+    // 定时检查鱼数量，不够就补
+    startFishManager() {
+        if (this.fishCheckInterval) clearInterval(this.fishCheckInterval);
+
+        this.fishCheckInterval = setInterval(() => {
+            if (gameState.phase !== 'playing' || !this.isHost) return;
+            this.replenishFish();
+        }, 5000); // 每5秒检查一次
+    },
+
+    replenishFish() {
+        let aliveFish = (gameState.aiFish || []).filter(f => f.alive);
+        let needed = this.FISH_TOTAL - aliveFish.length;
+        if (needed <= 0) return;
+
+        // 找最近的史蒂夫来确定刷新位置
+        let steves = Object.values(gameState.players).filter(p => p.team === 'steve' && p.alive);
+
+        for (let i = 0; i < needed; i++) {
+            let pos = null;
+
+            if (steves.length > 0) {
+                // 在随机一个史蒂夫周围30~60格水域刷新
+                let steve = steves[Math.floor(Math.random() * steves.length)];
+                pos = this.getRandomPosAround(steve.x, steve.y, 30, 60, true);
+            }
+
+            // 如果没找到合适位置，随机水域
+            if (!pos) pos = getRandomWaterPos();
+
+            let id = 'fish_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+            this.fishRef.child(id).set({
+                id: id,
+                type: 'fish',
+                x: pos.x,
+                y: pos.y,
+                hp: CONFIG.FISH_HP,
+                maxHp: CONFIG.FISH_HP,
+                alive: true,
+                wanderAngle: Math.random() * Math.PI * 2,
+                wanderTimer: Math.random() * 3,
             });
         }
     },
 
-    damageAI(aiId, damage, angle) {
-        let aiMonster = gameState.aiMonsters.find(m => m.id === aiId);
-        if (!aiMonster || !aiMonster.alive) return;
+    // 鱼受伤
+    damageFish(fishId, damage, angle) {
+        let fish = (gameState.aiFish || []).find(f => f.id === fishId);
+        if (!fish || !fish.alive) return;
 
-        aiMonster.hp -= damage;
+        fish.hp -= damage;
 
-        // 击退AI
+        // 击退
         if (angle !== undefined) {
-            aiMonster.x += Math.cos(angle) * CONFIG.KNOCKBACK_DIST;
-            aiMonster.y += Math.sin(angle) * CONFIG.KNOCKBACK_DIST;
-            // 边界限制
-            aiMonster.x = Math.max(0, Math.min(CONFIG.MAP_SIZE - 1, aiMonster.x));
-            aiMonster.y = Math.max(0, Math.min(CONFIG.MAP_SIZE - 1, aiMonster.y));
+            let newX = fish.x + Math.cos(angle) * CONFIG.KNOCKBACK_DIST;
+            let newY = fish.y + Math.sin(angle) * CONFIG.KNOCKBACK_DIST;
+            // 鱼只能在水里
+            let tx = Math.floor(newX), ty = Math.floor(newY);
+            if (gameState.map[ty] && gameState.map[ty][tx] === 1) {
+                fish.x = newX;
+                fish.y = newY;
+            }
         }
 
-        if (aiMonster.hp <= 0) {
-            aiMonster.alive = false;
+        if (fish.hp <= 0) {
+            fish.alive = false;
+            this.fishRef.child(fishId).update({alive: false, hp: 0});
+            setTimeout(() => this.fishRef.child(fishId).remove(), 2000);
+        } else {
+            this.fishRef.child(fishId).update({
+                hp: fish.hp,
+                x: Math.round(fish.x * 10) / 10,
+                y: Math.round(fish.y * 10) / 10,
+            });
+        }
+    },
+
+    // ===== AI怪物受伤 =====
+    damageAI(aiId, damage, angle) {
+        let monster = gameState.aiMonsters.find(m => m.id === aiId);
+        if (!monster || !monster.alive) return;
+
+        monster.hp -= damage;
+
+        // 击退
+        if (angle !== undefined) {
+            let newX = monster.x + Math.cos(angle) * CONFIG.KNOCKBACK_DIST;
+            let newY = monster.y + Math.sin(angle) * CONFIG.KNOCKBACK_DIST;
+            newX = Math.max(0, Math.min(CONFIG.MAP_SIZE - 1, newX));
+            newY = Math.max(0, Math.min(CONFIG.MAP_SIZE - 1, newY));
+            monster.x = newX;
+            monster.y = newY;
+        }
+
+        if (monster.hp <= 0) {
+            monster.alive = false;
             this.aiRef.child(aiId).update({alive: false, hp: 0});
-            // 一段时间后移除
-            setTimeout(() => {
-                this.aiRef.child(aiId).remove();
-            }, 2000);
+            setTimeout(() => this.aiRef.child(aiId).remove(), 2000);
         } else {
             this.aiRef.child(aiId).update({
-                hp: aiMonster.hp,
-                x: Math.round(aiMonster.x * 10) / 10,
-                y: Math.round(aiMonster.y * 10) / 10,
+                hp: monster.hp,
+                x: Math.round(monster.x * 10) / 10,
+                y: Math.round(monster.y * 10) / 10,
             });
         }
     },
 
-    // ===== AI简易行为（host运算）=====
-
+    // ===== AI行为循环 =====
     startAIBehavior() {
-        setInterval(() => {
+        if (this.aiBehaviorInterval) clearInterval(this.aiBehaviorInterval);
+
+        this.aiBehaviorInterval = setInterval(() => {
             if (gameState.phase !== 'playing' || !this.isHost) return;
 
+            // 更新怪物
             gameState.aiMonsters.forEach(monster => {
                 if (!monster.alive) return;
-                this.updateAIMonster(monster);
+                this.updateMonsterBehavior(monster);
             });
-        }, 500); // 每0.5秒更新AI
+
+            // 更新鱼
+            (gameState.aiFish || []).forEach(fish => {
+                if (!fish.alive) return;
+                this.updateFishBehavior(fish);
+            });
+
+        }, 500);
     },
 
-    updateAIMonster(monster) {
+    // ===== 怪物AI行为 =====
+    updateMonsterBehavior(monster) {
+        let dt = 0.5;
+
         // 找最近的史蒂夫
         let nearestSteve = null;
         let nearestDist = 999;
@@ -486,12 +602,9 @@ const NetworkManager = {
             }
         });
 
-        if (!nearestSteve) return;
-
-        // 移动向史蒂夫
+        // 速度
         let speed;
         switch (monster.type) {
-            case 'fish': speed = CONFIG.FISH_SPEED; break;
             case 'zombie': speed = CONFIG.ZOMBIE_SPEED; break;
             case 'skeleton': speed = CONFIG.SKELETON_SPEED; break;
             case 'creeper': speed = CONFIG.CREEPER_SPEED; break;
@@ -502,108 +615,182 @@ const NetworkManager = {
         let tileX = Math.floor(monster.x);
         let tileY = Math.floor(monster.y);
         let inWater = gameState.map[tileY] && gameState.map[tileY][tileX] === 1;
-        if (inWater && monster.type !== 'fish') {
-            speed *= CONFIG.WATER_SLOW;
-        }
+        if (inWater) speed *= CONFIG.WATER_SLOW;
 
-        let angle = angleBetween(monster.x, monster.y, nearestSteve.x, nearestSteve.y);
-        let dt = 0.5; // 更新间隔
+        let moveAngle;
+        let isChasing = false;
 
-        let newX = monster.x + Math.cos(angle) * speed * dt;
-        let newY = monster.y + Math.sin(angle) * speed * dt;
-
-        // 鱼不能上岸
-        if (monster.type === 'fish') {
-            let ntx = Math.floor(newX);
-            let nty = Math.floor(newY);
-            if (gameState.map[nty] && gameState.map[nty][ntx] !== 1) {
-                return; // 不移动
+        // 60格内追踪史蒂夫
+        if (nearestSteve && nearestDist <= this.MONSTER_AGGRO_RANGE) {
+            moveAngle = angleBetween(monster.x, monster.y, nearestSteve.x, nearestSteve.y);
+            isChasing = true;
+        } else {
+            // 自由漫游
+            monster.wanderTimer = (monster.wanderTimer || 0) - dt;
+            if (monster.wanderTimer <= 0) {
+                monster.wanderAngle = Math.random() * Math.PI * 2;
+                monster.wanderTimer = 2 + Math.random() * 3;
             }
+            moveAngle = monster.wanderAngle || 0;
+            speed = this.MONSTER_WANDER_SPEED;
+            if (inWater) speed *= CONFIG.WATER_SLOW;
         }
 
-        newX = Math.max(0, Math.min(CONFIG.MAP_SIZE - 1, newX));
-        newY = Math.max(0, Math.min(CONFIG.MAP_SIZE - 1, newY));
+        // 移动
+        let newX = monster.x + Math.cos(moveAngle) * speed * dt;
+        let newY = monster.y + Math.sin(moveAngle) * speed * dt;
+        newX = Math.max(1, Math.min(CONFIG.MAP_SIZE - 2, newX));
+        newY = Math.max(1, Math.min(CONFIG.MAP_SIZE - 2, newY));
 
         monster.x = newX;
         monster.y = newY;
 
         // 攻击判定
-        let attackRange;
-        let attackDamage;
-        switch (monster.type) {
-            case 'zombie':
-                attackRange = CONFIG.ZOMBIE_RANGE;
-                attackDamage = CONFIG.ZOMBIE_DAMAGE;
-                break;
-            case 'skeleton':
-                attackRange = CONFIG.SKELETON_RANGE;
-                attackDamage = CONFIG.SKELETON_DAMAGE;
-                break;
-            case 'creeper':
-                // 苦力怕靠近就爆炸
-                if (nearestDist < 2) {
-                    this.aiCreeperExplode(monster, nearestSteve);
-                    return;
+        if (isChasing && nearestSteve) {
+            let attackRange, attackDamage;
+            switch (monster.type) {
+                case 'zombie':
+                    attackRange = CONFIG.ZOMBIE_RANGE;
+                    attackDamage = CONFIG.ZOMBIE_DAMAGE;
+                    break;
+                case 'skeleton':
+                    attackRange = CONFIG.SKELETON_RANGE;
+                    attackDamage = CONFIG.SKELETON_DAMAGE;
+                    break;
+                case 'creeper':
+                    if (nearestDist < 2) {
+                        this.aiCreeperExplode(monster);
+                        return;
+                    }
+                    attackRange = 0;
+                    break;
+                default:
+                    attackRange = 3;
+                    attackDamage = 4;
+            }
+
+            if (attackRange > 0 && nearestDist <= attackRange) {
+                let atkAngle = angleBetween(monster.x, monster.y, nearestSteve.x, nearestSteve.y);
+
+                // 骷髅远程射箭
+                if (monster.type === 'skeleton' && nearestDist > 3) {
+                    this.eventsRef.push({
+                        type: 'projectile',
+                        x: monster.x, y: monster.y,
+                        dirX: Math.round(Math.cos(atkAngle) * 100) / 100,
+                        dirY: Math.round(Math.sin(atkAngle) * 100) / 100,
+                        damage: attackDamage,
+                        speed: CONFIG.ARROW_SPEED,
+                        owner: monster.id,
+                        ownerTeam: 'monster',
+                        t: Date.now(),
+                    });
+                } else if (monster.type !== 'skeleton') {
+                    // 近战攻击
+                    this.eventsRef.push({
+                        type: 'damage',
+                        target: nearestSteve.id,
+                        damage: attackDamage,
+                        angle: atkAngle,
+                        from: monster.id,
+                        t: Date.now(),
+                    });
                 }
-                attackRange = 0;
-                break;
-            case 'fish':
-                attackRange = CONFIG.FISH_RANGE;
-                attackDamage = CONFIG.FISH_DAMAGE;
-                break;
-            default:
-                attackRange = 3;
-                attackDamage = 4;
+            }
         }
 
-        if (nearestDist <= attackRange && monster.type !== 'creeper') {
-            // AI攻击（通过事件发送）
-            let atkAngle = angleBetween(monster.x, monster.y, nearestSteve.x, nearestSteve.y);
-            this.eventsRef.push({
-                type: 'damage',
-                target: nearestSteve.id,
-                damage: attackDamage,
-                angle: atkAngle,
-                from: monster.id,
-                t: Date.now(),
-            });
-        }
-
-        // 骷髅远程（射箭效果）
-        if (monster.type === 'skeleton' && nearestDist <= CONFIG.SKELETON_RANGE && nearestDist > 5) {
-            // 发射箭（视觉效果）
-            this.eventsRef.push({
-                type: 'projectile',
-                x: monster.x,
-                y: monster.y,
-                dirX: Math.cos(angle),
-                dirY: Math.sin(angle),
-                damage: CONFIG.SKELETON_DAMAGE,
-                speed: CONFIG.ARROW_SPEED,
-                owner: monster.id,
-                ownerTeam: 'monster',
-                t: Date.now(),
-            });
-        }
-
-        // 更新位置到数据库
+        // 更新到数据库
         this.aiRef.child(monster.id).update({
             x: Math.round(monster.x * 10) / 10,
             y: Math.round(monster.y * 10) / 10,
+            wanderAngle: monster.wanderAngle,
+            wanderTimer: monster.wanderTimer,
         });
     },
 
-    aiCreeperExplode(monster, target) {
-        // 爆炸
+    // ===== 鱼AI行为 =====
+    updateFishBehavior(fish) {
+        let dt = 0.5;
+
+        // 找最近的史蒂夫
+        let nearestSteve = null;
+        let nearestDist = 999;
+
+        Object.values(gameState.players).forEach(p => {
+            if (p.team !== 'steve' || !p.alive) return;
+            let d = distBetween(fish.x, fish.y, p.x, p.y);
+            if (d < nearestDist) {
+                nearestDist = d;
+                nearestSteve = p;
+            }
+        });
+
+        let speed = CONFIG.FISH_SPEED;
+        let moveAngle;
+        let isChasing = false;
+
+        // 10格内才追踪
+        if (nearestSteve && nearestDist <= this.FISH_AGGRO_RANGE) {
+            moveAngle = angleBetween(fish.x, fish.y, nearestSteve.x, nearestSteve.y);
+            isChasing = true;
+        } else {
+            // 自由游动
+            fish.wanderTimer = (fish.wanderTimer || 0) - dt;
+            if (fish.wanderTimer <= 0) {
+                fish.wanderAngle = Math.random() * Math.PI * 2;
+                fish.wanderTimer = 1 + Math.random() * 3;
+            }
+            moveAngle = fish.wanderAngle || 0;
+            speed = this.FISH_WANDER_SPEED;
+        }
+
+        // 移动（只能在水里）
+        let newX = fish.x + Math.cos(moveAngle) * speed * dt;
+        let newY = fish.y + Math.sin(moveAngle) * speed * dt;
+        newX = Math.max(1, Math.min(CONFIG.MAP_SIZE - 2, newX));
+        newY = Math.max(1, Math.min(CONFIG.MAP_SIZE - 2, newY));
+
+        let ntx = Math.floor(newX), nty = Math.floor(newY);
+        if (gameState.map[nty] && gameState.map[nty][ntx] === 1) {
+            fish.x = newX;
+            fish.y = newY;
+        } else {
+            // 碰到岸边，换方向
+            fish.wanderAngle = Math.random() * Math.PI * 2;
+            fish.wanderTimer = 1;
+        }
+
+        // 攻击（3格内，10伤害）
+        if (isChasing && nearestSteve && nearestDist <= CONFIG.FISH_RANGE) {
+            let atkAngle = angleBetween(fish.x, fish.y, nearestSteve.x, nearestSteve.y);
+            this.eventsRef.push({
+                type: 'damage',
+                target: nearestSteve.id,
+                damage: CONFIG.FISH_DAMAGE,
+                angle: atkAngle,
+                from: fish.id,
+                t: Date.now(),
+            });
+        }
+
+        // 更新数据库
+        this.fishRef.child(fish.id).update({
+            x: Math.round(fish.x * 10) / 10,
+            y: Math.round(fish.y * 10) / 10,
+            wanderAngle: fish.wanderAngle,
+            wanderTimer: fish.wanderTimer,
+        });
+    },
+
+    // ===== 苦力怕AI爆炸 =====
+    aiCreeperExplode(monster) {
         this.eventsRef.push({
             type: 'explosion',
-            x: monster.x,
-            y: monster.y,
+            x: monster.x, y: monster.y,
             from: monster.id,
             t: Date.now(),
         });
 
-        // 对附近史蒂夫造成伤害
         Object.values(gameState.players).forEach(p => {
             if (p.team !== 'steve' || !p.alive) return;
             let dist = distBetween(monster.x, monster.y, p.x, p.y);
@@ -621,18 +808,15 @@ const NetworkManager = {
             }
         });
 
-        // 苦力怕死亡
         monster.alive = false;
         this.aiRef.child(monster.id).update({alive: false, hp: 0});
         setTimeout(() => this.aiRef.child(monster.id).remove(), 2000);
     },
 
     // ===== Host管理 =====
-
     checkHostDuty() {
         this.roomRef.child('host').once('value', snapshot => {
             let hostId = snapshot.val();
-            // 检查host是否还在
             if (hostId && gameState.players[hostId]) {
                 this.isHost = false;
             } else {
@@ -642,7 +826,6 @@ const NetworkManager = {
     },
 
     tryBecomeHost() {
-        // 尝试成为host（用transaction避免冲突）
         this.roomRef.child('host').transaction(currentHost => {
             if (!currentHost || !gameState.players[currentHost]) {
                 return gameState.myId;
@@ -653,12 +836,13 @@ const NetworkManager = {
                 this.isHost = true;
                 this.startAISpawner();
                 this.startAIBehavior();
+                this.startFishManager();
                 console.log('成为房间Host');
             }
         });
     },
 
-    // ===== 检查史蒂夫存活 =====
+    // ===== 检查史蒂夫 =====
     checkSteveStatus() {
         let anySteveLives = false;
         Object.values(gameState.players).forEach(p => {
@@ -668,7 +852,6 @@ const NetworkManager = {
         });
 
         if (!anySteveLives) {
-            // 看看有没有史蒂夫（可能都是怪物）
             let hasStevePlayer = Object.values(gameState.players).some(p => p.team === 'steve');
             if (hasStevePlayer) {
                 endGame('monster');
@@ -679,18 +862,20 @@ const NetworkManager = {
     // ===== 清理 =====
     cleanup() {
         if (this.aiSpawnInterval) clearInterval(this.aiSpawnInterval);
+        if (this.aiBehaviorInterval) clearInterval(this.aiBehaviorInterval);
+        if (this.fishCheckInterval) clearInterval(this.fishCheckInterval);
         if (this.roomRef) {
             this.playersRef.off();
             this.eventsRef.off();
             this.dropsRef.off();
             this.aiRef.off();
+            this.fishRef.off();
             this.roomRef.child('winner').off();
             this.roomRef.child('host').off();
         }
     },
 };
 
-// 页面关闭时清理
 window.addEventListener('beforeunload', () => {
     NetworkManager.cleanup();
 });
