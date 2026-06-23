@@ -131,14 +131,54 @@
             padding: 5px 12px; border-radius: 6px;
         }
 
+        /* 玩家人数 */
+        #player-count {
+            position: absolute; top: 40px;
+            left: 50%; transform: translateX(-50%);
+            color: #aaa; font-size: 12px;
+            background: rgba(0,0,0,0.5);
+            padding: 3px 10px; border-radius: 4px;
+        }
+
+        /* 玩家加入提示 */
+        #join-toast {
+            position: absolute; top: 70px;
+            left: 50%; transform: translateX(-50%);
+            color: #4ecca3; font-size: 12px;
+            background: rgba(0,0,0,0.7);
+            padding: 4px 12px; border-radius: 4px;
+            display: none;
+            transition: opacity 0.3s;
+        }
+
         /* 小地图 */
         #minimap {
             position: absolute; top: 10px; right: 10px;
             width: 110px; height: 110px;
             background: rgba(0,0,0,0.7);
             border: 2px solid #555; border-radius: 4px;
+            cursor: pointer;
         }
         #minimap-canvas { width: 100%; height: 100%; }
+
+        /* 全图覆盖 */
+        #fullmap-overlay {
+            display: none;
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85);
+            z-index: 80;
+            align-items: center; justify-content: center;
+            flex-direction: column;
+        }
+        #fullmap-overlay canvas {
+            border: 2px solid #555;
+        }
+        #fullmap-close {
+            color: #aaa; font-size: 13px; margin-top: 8px;
+            cursor: pointer;
+        }
+        #fullmap-close:hover { color: white; }
 
         /* 摇杆 */
         #joystick-area {
@@ -165,6 +205,7 @@
             display: flex; align-items: center; justify-content: center;
             color: white; font-weight: bold; font-size: 12px;
             cursor: pointer;
+            touch-action: none;
         }
         #attack-btn {
             bottom: 65px; right: 20px;
@@ -185,7 +226,7 @@
             border: 3px solid rgba(155,89,182,0.9);
         }
 
-        /* 怪物攻击按钮（单独一个大按钮）*/
+        /* 怪物攻击按钮 */
         #monster-attack-btn {
             position: absolute;
             bottom: 65px; right: 30px;
@@ -197,6 +238,22 @@
             align-items: center; justify-content: center;
             color: white; font-weight: bold; font-size: 14px;
             cursor: pointer;
+            touch-action: none;
+        }
+
+        /* 骷髅蓄力条 */
+        #skeleton-charge-bar {
+            position: absolute;
+            bottom: 45px; right: 30px;
+            width: 70px; height: 8px;
+            background: #333; border-radius: 4px;
+            display: none; overflow: hidden;
+        }
+        #skeleton-charge-fill {
+            height: 100%; width: 0%;
+            background: linear-gradient(90deg, #e74c3c, #f39c12);
+            border-radius: 4px;
+            transition: width 0.05s;
         }
 
         /* 弓箭蓄力条 */
@@ -214,16 +271,6 @@
             transition: width 0.05s;
         }
 
-        /* 弓箭瞄准线提示 */
-        #aim-hint {
-            position: absolute;
-            bottom: 130px; right: 85px;
-            color: rgba(255,255,255,0.6);
-            font-size: 10px;
-            display: none;
-            pointer-events: none;
-        }
-
         /* 死亡遮罩 */
         #death-overlay {
             display: none; position: absolute;
@@ -237,7 +284,7 @@
             display: flex; gap: 10px; margin-top: 15px;
         }
 
-        /* 怪物切换面板（复活时显示）*/
+        /* 怪物切换面板 */
         #switch-panel {
             display: none;
             flex-direction: column;
@@ -325,15 +372,15 @@
                 <tr><td>复活</td><td>3次，中心村庄复活</td></tr>
                 <tr><td>回血</td><td>每10秒+1血</td></tr>
                 <tr><td>铁剑</td><td>伤害6，范围3格，间隔0.6秒，耐久200</td></tr>
-                <tr><td>弓箭</td><td>伤害2~8（蓄力），射程30格，箭速20格/秒</td></tr>
-                <tr><td>箭</td><td>上限64支，手动瞄准</td></tr>
+                <tr><td>弓箭</td><td>伤害2~8（蓄力自动锁定），射程30格</td></tr>
+                <tr><td>箭</td><td>上限64支</td></tr>
                 <tr><td>药水</td><td>回复4血</td></tr>
                 <tr><td>补给</td><td>中心村庄，每5分钟一次</td></tr>
             </table>
             <h3>👾 敌对生物</h3>
             <table>
                 <tr><td>僵尸</td><td>20血，伤害4，范围3格，速度4格/秒</td></tr>
-                <tr><td>骷髅</td><td>20血，伤害4，射程30格，速度4格/秒</td></tr>
+                <tr><td>骷髅</td><td>20血，伤害4，射程30格，速度4格/秒，自动蓄力射击</td></tr>
                 <tr><td>苦力怕</td><td>20血，爆炸1~20伤害，速度4格/秒，自爆</td></tr>
                 <tr><td>鱼</td><td>10血，伤害10，范围3格，速度10格/秒，不可上岸</td></tr>
             </table>
@@ -347,8 +394,9 @@
             <h3>🎮 操作</h3>
             <table>
                 <tr><td>移动</td><td>WASD/摇杆（攻击不影响移动）</td></tr>
-                <tr><td>史蒂夫</td><td>J=剑 K=弓(按住蓄力+鼠标瞄准) L=药水</td></tr>
-                <tr><td>怪物</td><td>J=攻击 / 攻击按钮</td></tr>
+                <tr><td>史蒂夫</td><td>J=剑 K=弓(自动锁定) L=药水</td></tr>
+                <tr><td>怪物</td><td>J=攻击（骷髅自动蓄力射击）</td></tr>
+                <tr><td>小地图</td><td>点击可查看全图</td></tr>
             </table>
         </div>
     </div>
@@ -364,9 +412,17 @@
         </div>
 
         <div id="timer">30:00</div>
+        <div id="player-count">玩家: 0</div>
+        <div id="join-toast"></div>
 
         <div id="minimap">
             <canvas id="minimap-canvas" width="110" height="110"></canvas>
+        </div>
+
+        <!-- 全图覆盖 -->
+        <div id="fullmap-overlay">
+            <canvas id="fullmap-canvas" width="300" height="300"></canvas>
+            <div id="fullmap-close">点击关闭</div>
         </div>
 
         <div id="joystick-area">
@@ -380,10 +436,10 @@
         <div class="action-btn" id="bow-btn">弓</div>
         <div class="action-btn" id="potion-btn">药水</div>
         <div id="bow-charge-bar"><div id="bow-charge-fill"></div></div>
-        <div id="aim-hint">← 拖动瞄准 →</div>
 
         <!-- 怪物按钮 -->
         <div id="monster-attack-btn">攻击</div>
+        <div id="skeleton-charge-bar"><div id="skeleton-charge-fill"></div></div>
 
         <!-- 死亡 -->
         <div id="death-overlay">
