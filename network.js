@@ -37,10 +37,6 @@ const NetworkManager = {
                 let count = Object.keys(roomData.players).length;
                 if (count >= CONFIG.MAX_PLAYERS) return;
                 if (roomData.state === 'ended') return;
-                if (playerData.team === 'steve') {
-                    let sc = Object.values(roomData.players).filter(p => p.team === 'steve').length;
-                    if (sc >= CONFIG.MAX_STEVE) return;
-                }
                 if (count > bestCount) { bestCount = count; bestRoom = roomId; }
             });
 
@@ -142,13 +138,11 @@ const NetworkManager = {
 
     // ===== 监听 =====
     setupListeners() {
-        // 玩家变化监听（含加入提示）
         this.playersRef.on('value', snapshot => {
             let players = snapshot.val() || {};
             let currentIds = Object.keys(players);
             let previousIds = gameState.previousPlayerIds || [];
 
-            // 检测新加入的玩家
             currentIds.forEach(id => {
                 if (!previousIds.includes(id) && id !== gameState.myId) {
                     let p = players[id];
@@ -332,10 +326,15 @@ const NetworkManager = {
     spawnMonstersAroundSteves() {
         let steves = Object.values(gameState.players).filter(p => p.team === 'steve' && p.alive);
         if (steves.length === 0) return;
+
+        let currentAI = (gameState.aiMonsters || []).filter(m => m.alive).length;
+        if (currentAI >= CONFIG.AI_MAX) return;
+
         let types = ['zombie', 'skeleton', 'creeper'];
 
         steves.forEach(steve => {
             for (let i = 0; i < this.MONSTER_SPAWN_COUNT; i++) {
+                if (currentAI >= CONFIG.AI_MAX) return;
                 let type = types[Math.floor(Math.random() * types.length)];
                 let pos = this.getPosAround(steve.x, steve.y, this.MONSTER_SPAWN_MIN, this.MONSTER_SPAWN_MAX, false);
                 if (!pos) continue;
@@ -346,6 +345,7 @@ const NetworkManager = {
                     wanderAngle: Math.random() * Math.PI * 2,
                     wanderTimer: 0,
                 });
+                currentAI++;
             }
         });
     },
