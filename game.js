@@ -577,8 +577,8 @@ function attackSword(){
 
 function monsterAttack(){
     switch(gameState.myMonster){
-        case'zombie':
-        case'fish':{
+        case 'zombie':
+        case 'fish':{
             if(localPlayer.swordCooldown>0)return;
             localPlayer.swordCooldown=CONFIG.SWORD_COOLDOWN;
             let range=gameState.myMonster==='fish'?CONFIG.FISH_RANGE:CONFIG.ZOMBIE_RANGE;
@@ -592,16 +592,36 @@ function monsterAttack(){
             triggerSlash(dir);
             break;
         }
-        case'skeleton':{
-            if(localPlayer.skeletonCharging) return;
+        case 'skeleton':{
             if(localPlayer.swordCooldown>0) return;
-            localPlayer.skeletonCharging=true;
-            localPlayer.skeletonChargeStart=Date.now();
-            document.getElementById('skeleton-charge-bar').style.display='block';
-            document.getElementById('skeleton-charge-fill').style.width='0%';
+            localPlayer.swordCooldown=CONFIG.SKELETON_COOLDOWN;
+
+            let target=findNearestSteve(CONFIG.SKELETON_RANGE);
+            let dirX, dirY;
+            if(target){
+                let dir=angle(localPlayer.x,localPlayer.y,target.x,target.y);
+                dirX=Math.cos(dir);
+                dirY=Math.sin(dir);
+            } else {
+                dirX=Math.cos(localPlayer.facingAngle);
+                dirY=Math.sin(localPlayer.facingAngle);
+            }
+
+            let arrow={
+                id:gameState.myId+'_'+Date.now(),
+                x:localPlayer.x,y:localPlayer.y,
+                dirX:dirX,dirY:dirY,
+                damage:CONFIG.SKELETON_DAMAGE,
+                speed:CONFIG.ARROW_SPEED,
+                owner:gameState.myId,ownerTeam:'monster',
+                trail:[{x:localPlayer.x,y:localPlayer.y}],
+                distTraveled:0,
+            };
+            gameState.projectiles.push(arrow);
+            NetworkManager.sendProjectile(arrow);
             break;
         }
-        case'creeper':{
+        case 'creeper':{
             if(localPlayer.swordCooldown>0)return;
             localPlayer.swordCooldown=CONFIG.SWORD_COOLDOWN;
             creeperExplode();
@@ -610,44 +630,7 @@ function monsterAttack(){
     }
 }
 
-function skeletonAutoShoot(){
-    if(!localPlayer.skeletonCharging) return;
-    let elapsed=(Date.now()-localPlayer.skeletonChargeStart)/1000;
-    let ratio=Math.min(elapsed/CONFIG.SKELETON_CHARGE_TIME, 1);
-    document.getElementById('skeleton-charge-fill').style.width=(ratio*100)+'%';
-
-    if(ratio>=1){
-        localPlayer.skeletonCharging=false;
-        localPlayer.swordCooldown=CONFIG.SKELETON_COOLDOWN;
-        document.getElementById('skeleton-charge-bar').style.display='none';
-        document.getElementById('skeleton-charge-fill').style.width='0%';
-
-        // 自动锁定最近Steve，没目标朝面对方向射
-        let target=findNearestSteve(CONFIG.SKELETON_RANGE);
-        let dirX, dirY;
-        if(target){
-            let dir=angle(localPlayer.x,localPlayer.y,target.x,target.y);
-            dirX=Math.cos(dir);
-            dirY=Math.sin(dir);
-        } else {
-            dirX=Math.cos(localPlayer.facingAngle);
-            dirY=Math.sin(localPlayer.facingAngle);
-        }
-
-        let arrow={
-            id:gameState.myId+'_'+Date.now(),
-            x:localPlayer.x,y:localPlayer.y,
-            dirX:dirX,dirY:dirY,
-            damage:CONFIG.SKELETON_DAMAGE,
-            speed:CONFIG.ARROW_SPEED,
-            owner:gameState.myId,ownerTeam:'monster',
-            trail:[{x:localPlayer.x,y:localPlayer.y}],
-            distTraveled:0,
-        };
-        gameState.projectiles.push(arrow);
-        NetworkManager.sendProjectile(arrow);
-    }
-}
+function skeletonAutoShoot(){}
 
 function triggerSlash(a){
     localPlayer.slashActive=true;
@@ -1278,29 +1261,6 @@ function render() {
             ctx.globalAlpha = 0.6 + Math.sin(Date.now() * 0.03) * 0.3;
             Renderer.drawHitFlash(ctx, sx, sy, viewTileSize, 0.15);
             ctx.globalAlpha = 1;
-        }
-
-        // 骷髅蓄力锁定指示
-        if (localPlayer.skeletonCharging) {
-            let target = findNearestSteve(CONFIG.SKELETON_RANGE);
-            if (target) {
-                let tsx = (target.x - camX) * viewTileSize + viewTileSize / 2;
-                let tsy = (target.y - camY) * viewTileSize + viewTileSize / 2;
-                ctx.strokeStyle = 'rgba(255,60,60,0.6)';
-                ctx.lineWidth = 2;
-                ctx.setLineDash([4, 4]);
-                ctx.beginPath();
-                ctx.moveTo(sx + viewTileSize / 2, sy + viewTileSize / 2);
-                ctx.lineTo(tsx, tsy);
-                ctx.stroke();
-                ctx.setLineDash([]);
-                // 锁定圈
-                ctx.strokeStyle = 'rgba(255,60,60,0.8)';
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.arc(tsx, tsy, viewTileSize * 0.6, 0, Math.PI * 2);
-                ctx.stroke();
-            }
         }
     }
 }
