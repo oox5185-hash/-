@@ -20,22 +20,23 @@
             flex-direction: column;
             align-items: center;
             justify-content: flex-start;
-            height: 100vh;
+            min-height: 100vh;
+            height: auto;
             background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
-            padding: 20px;
+            padding: 15px;
             overflow-y: auto;
         }
         #login-screen h1 {
             color: #4ecca3;
-            font-size: 36px;
-            margin: 10px 0 5px;
+            font-size: 32px;
+            margin: 8px 0 4px;
             text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
         }
-        .subtitle { color: #a8a8a8; margin-bottom: 15px; font-size: 14px; }
+        .subtitle { color: #a8a8a8; margin-bottom: 12px; font-size: 13px; }
 
-        .team-select { display: flex; gap: 15px; margin-bottom: 15px; }
+        .team-select { display: flex; gap: 12px; margin-bottom: 12px; }
         .team-btn {
-            width: 120px; height: 140px;
+            width: 110px; height: 120px;
             border: 2px solid #333; border-radius: 10px;
             background: #2a2a4a; cursor: pointer;
             display: flex; flex-direction: column;
@@ -47,14 +48,21 @@
             border-color: #4ecca3; background: #3a3a5a;
             box-shadow: 0 0 15px rgba(78,204,163,0.3);
         }
-        .team-btn .icon { width: 50px; height: 50px; margin-bottom: 8px; }
-        .team-btn .label { color: white; font-size: 14px; font-weight: bold; }
-        .team-btn .desc { color: #888; font-size: 10px; margin-top: 3px; }
+        .team-btn .icon { width: 45px; height: 45px; margin-bottom: 6px; }
+        .team-btn .label { color: white; font-size: 13px; font-weight: bold; }
+        .team-btn .desc { color: #888; font-size: 10px; margin-top: 2px; }
 
-        .monster-select { display: none; gap: 10px; margin-bottom: 15px; }
+        .monster-select {
+            display: none;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 12px;
+            max-width: 300px;
+        }
         .monster-select.show { display: flex; }
         .monster-btn {
-            width: 70px; height: 90px;
+            width: 62px; height: 78px;
             border: 2px solid #333; border-radius: 6px;
             background: #2a2a4a; cursor: pointer;
             display: flex; flex-direction: column;
@@ -63,21 +71,21 @@
         }
         .monster-btn:hover { border-color: #e74c3c; }
         .monster-btn.selected { border-color: #e74c3c; background: #4a2a2a; }
-        .monster-btn .label { color: white; font-size: 12px; margin-top: 5px; }
+        .monster-btn .label { color: white; font-size: 11px; margin-top: 4px; }
 
-        .name-section { display: flex; gap: 10px; align-items: center; margin-bottom: 15px; }
+        .name-section { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
         .name-input {
             background: #2a2a4a; border: 2px solid #444;
             border-radius: 6px; color: white;
-            padding: 8px 15px; font-size: 14px;
-            width: 150px; text-align: center;
+            padding: 8px 12px; font-size: 14px;
+            width: 130px; text-align: center;
         }
         .name-input:focus { outline: none; border-color: #4ecca3; }
 
         .btn {
             background: #4ecca3; color: #1a1a2e; border: none;
-            border-radius: 8px; padding: 10px 25px;
-            font-size: 16px; font-weight: bold;
+            border-radius: 8px; padding: 10px 22px;
+            font-size: 15px; font-weight: bold;
             cursor: pointer; transition: all 0.3s;
         }
         .btn:hover { background: #3dbb94; transform: scale(1.05); }
@@ -86,14 +94,14 @@
         /* 规则面板 */
         .rules-panel {
             background: #2a2a4a; border-radius: 10px;
-            padding: 15px; width: 90%; max-width: 500px;
-            margin-top: 10px; color: #ccc; font-size: 12px;
-            max-height: 300px; overflow-y: auto;
+            padding: 12px; width: 90%; max-width: 400px;
+            margin-top: 8px; color: #ccc; font-size: 11px;
+            max-height: 240px; overflow-y: auto;
         }
-        .rules-panel h3 { color: #4ecca3; margin-bottom: 8px; font-size: 14px; }
-        .rules-panel table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
-        .rules-panel td { padding: 3px 6px; border-bottom: 1px solid #3a3a5a; }
-        .rules-panel td:first-child { color: #f39c12; width: 80px; }
+        .rules-panel h3 { color: #4ecca3; margin-bottom: 6px; font-size: 13px; }
+        .rules-panel table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+        .rules-panel td { padding: 2px 5px; border-bottom: 1px solid #3a3a5a; font-size: 11px; }
+        .rules-panel td:first-child { color: #f39c12; width: 70px; }
 
         /* ===== 游戏界面 ===== */
         #game-screen {
@@ -107,24 +115,19 @@
             position: absolute; top: 10px; left: 10px;
             pointer-events: none;
         }
-        .hearts-container {
-            display: flex; gap: 2px; margin-bottom: 5px;
-        }
-        .heart {
-            width: 16px; height: 16px;
-            position: relative;
-        }
+        .hearts-container { display: flex; gap: 2px; margin-bottom: 5px; }
+        .heart { width: 13px; height: 13px; }
         .hud-info {
             background: rgba(0,0,0,0.6);
-            padding: 5px 10px; border-radius: 4px;
-            margin-bottom: 3px; color: white; font-size: 12px;
+            padding: 4px 8px; border-radius: 4px;
+            margin-bottom: 3px; color: white; font-size: 11px;
         }
 
         /* 计时器 */
         #timer {
             position: absolute; top: 10px;
             left: 50%; transform: translateX(-50%);
-            color: white; font-size: 20px;
+            color: white; font-size: 18px;
             background: rgba(0,0,0,0.6);
             padding: 5px 12px; border-radius: 6px;
         }
@@ -132,7 +135,7 @@
         /* 小地图 */
         #minimap {
             position: absolute; top: 10px; right: 10px;
-            width: 120px; height: 120px;
+            width: 110px; height: 110px;
             background: rgba(0,0,0,0.7);
             border: 2px solid #555; border-radius: 4px;
         }
@@ -140,8 +143,8 @@
 
         /* 摇杆 */
         #joystick-area {
-            position: absolute; bottom: 30px; left: 30px;
-            width: 120px; height: 120px;
+            position: absolute; bottom: 25px; left: 25px;
+            width: 110px; height: 110px;
         }
         #joystick-base {
             width: 100px; height: 100px;
@@ -165,28 +168,28 @@
             cursor: pointer;
         }
         #attack-btn {
-            bottom: 70px; right: 25px;
-            width: 60px; height: 60px;
+            bottom: 65px; right: 20px;
+            width: 58px; height: 58px;
             background: rgba(231,76,60,0.7);
             border: 3px solid rgba(231,76,60,0.9);
         }
         #bow-btn {
-            bottom: 70px; right: 100px;
-            width: 60px; height: 60px;
+            bottom: 65px; right: 90px;
+            width: 58px; height: 58px;
             background: rgba(52,152,219,0.7);
             border: 3px solid rgba(52,152,219,0.9);
         }
         #potion-btn {
-            bottom: 140px; right: 25px;
-            width: 50px; height: 50px;
+            bottom: 135px; right: 20px;
+            width: 48px; height: 48px;
             background: rgba(155,89,182,0.7);
             border: 3px solid rgba(155,89,182,0.9);
         }
 
-        /* 弓箭瞄准摇杆 */
+        /* 弓瞄准摇杆 */
         #aim-area {
             display: none; position: absolute;
-            bottom: 70px; right: 100px;
+            bottom: 60px; right: 85px;
             width: 100px; height: 100px;
         }
         #aim-base {
@@ -203,14 +206,13 @@
             transform: translate(-50%, -50%);
         }
         #aim-charge {
-            position: absolute; bottom: -15px; left: 0;
-            width: 100px; height: 6px;
+            position: absolute; bottom: -12px; left: 0;
+            width: 100px; height: 5px;
             background: #333; border-radius: 3px;
         }
         #aim-charge-fill {
             height: 100%; width: 0%;
             background: #3498db; border-radius: 3px;
-            transition: width 0.05s;
         }
 
         /* 死亡遮罩 */
@@ -220,7 +222,7 @@
             background: rgba(139,0,0,0.4);
             flex-direction: column; align-items: center;
             justify-content: center; color: white;
-            font-size: 28px; z-index: 50; pointer-events: none;
+            font-size: 26px; z-index: 50; pointer-events: none;
         }
 
         /* 结算 */
@@ -231,19 +233,9 @@
             flex-direction: column; align-items: center;
             justify-content: center; color: white; z-index: 100;
         }
-        #result-screen h1 { font-size: 42px; margin-bottom: 15px; }
+        #result-screen h1 { font-size: 38px; margin-bottom: 12px; }
         .win { color: #4ecca3; }
         .lose { color: #e74c3c; }
-
-        /* 补给倒计时 */
-        #supply-timer {
-            position: absolute; top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
-            color: #f39c12; font-size: 14px;
-            background: rgba(0,0,0,0.5);
-            padding: 3px 8px; border-radius: 4px;
-            display: none; pointer-events: none;
-        }
     </style>
 </head>
 <body>
@@ -254,12 +246,12 @@
 
         <div class="team-select">
             <div class="team-btn" id="btn-steve" onclick="selectTeam('steve')">
-                <canvas class="icon" id="steve-icon" width="50" height="50"></canvas>
+                <canvas class="icon" id="steve-icon" width="45" height="45"></canvas>
                 <span class="label">史蒂夫</span>
                 <span class="desc">生存30分钟</span>
             </div>
             <div class="team-btn" id="btn-monster" onclick="selectTeam('monster')">
-                <canvas class="icon" id="monster-icon" width="50" height="50"></canvas>
+                <canvas class="icon" id="monster-icon" width="45" height="45"></canvas>
                 <span class="label">敌对生物</span>
                 <span class="desc">消灭史蒂夫</span>
             </div>
@@ -267,19 +259,19 @@
 
         <div class="monster-select" id="monster-select">
             <div class="monster-btn" onclick="selectMonster('zombie')">
-                <canvas width="40" height="40" id="zombie-icon"></canvas>
+                <canvas width="35" height="35" id="zombie-icon"></canvas>
                 <span class="label">僵尸</span>
             </div>
             <div class="monster-btn" onclick="selectMonster('skeleton')">
-                <canvas width="40" height="40" id="skeleton-icon"></canvas>
+                <canvas width="35" height="35" id="skeleton-icon"></canvas>
                 <span class="label">骷髅</span>
             </div>
             <div class="monster-btn" onclick="selectMonster('creeper')">
-                <canvas width="40" height="40" id="creeper-icon"></canvas>
+                <canvas width="35" height="35" id="creeper-icon"></canvas>
                 <span class="label">苦力怕</span>
             </div>
             <div class="monster-btn" onclick="selectMonster('fish')">
-                <canvas width="40" height="40" id="fish-icon"></canvas>
+                <canvas width="35" height="35" id="fish-icon"></canvas>
                 <span class="label">鱼</span>
             </div>
         </div>
@@ -291,27 +283,27 @@
 
         <div class="rules-panel">
             <h3>📖 游戏规则</h3>
-            <p style="margin-bottom:8px;">史蒂夫阵营需坚持30分钟，敌对生物阵营需消灭所有史蒂夫。</p>
+            <p style="margin-bottom:6px;">史蒂夫阵营需坚持30分钟，敌对生物阵营需消灭所有史蒂夫。</p>
 
-            <h3>👤 史蒂夫属性</h3>
+            <h3>👤 史蒂夫</h3>
             <table>
                 <tr><td>血量</td><td>20（10颗心）</td></tr>
                 <tr><td>速度</td><td>5格/秒</td></tr>
                 <tr><td>护甲</td><td>铁甲 20%减伤</td></tr>
-                <tr><td>复活</td><td>3次，中心点复活</td></tr>
+                <tr><td>复活</td><td>3次，中心村庄复活</td></tr>
                 <tr><td>回血</td><td>每10秒+1血</td></tr>
                 <tr><td>铁剑</td><td>伤害6，范围3格，间隔0.6秒，耐久200</td></tr>
                 <tr><td>弓箭</td><td>伤害2~8（蓄力），射程30格，箭速20格/秒</td></tr>
                 <tr><td>箭</td><td>上限64支</td></tr>
                 <tr><td>药水</td><td>回复4血</td></tr>
-                <tr><td>补给</td><td>中心房子，每5分钟一次</td></tr>
+                <tr><td>补给</td><td>中心村庄，每5分钟补充一次</td></tr>
             </table>
 
-            <h3>👾 敌对生物属性</h3>
+            <h3>👾 敌对生物</h3>
             <table>
                 <tr><td>僵尸</td><td>20血，伤害4，范围3格，速度6格/秒</td></tr>
                 <tr><td>骷髅</td><td>20血，伤害4，射程30格，速度6格/秒</td></tr>
-                <tr><td>苦力怕</td><td>20血，爆炸1~20伤害，速度6格/秒，自爆</td></tr>
+                <tr><td>苦力怕</td><td>20血，爆炸伤害1~20，速度6格/秒，自爆</td></tr>
                 <tr><td>鱼</td><td>10血，伤害10，范围3格，速度10格/秒，不可上岸</td></tr>
             </table>
 
@@ -320,14 +312,15 @@
                 <tr><td>击退</td><td>被攻击后击退1.5格，0.2秒无法移动但能攻击</td></tr>
                 <tr><td>水中</td><td>所有非鱼单位减速70%</td></tr>
                 <tr><td>苦力怕</td><td>1格20伤，2格15，3格8，4格3，5格1</td></tr>
-                <tr><td>刷怪</td><td>每分钟随机生成5个AI怪物</td></tr>
+                <tr><td>刷怪</td><td>每30秒在史蒂夫周围30~60格刷5个怪</td></tr>
+                <tr><td>鱼群</td><td>初始50条分散水域，10格内追踪，独立刷新</td></tr>
             </table>
 
             <h3>🎮 操作</h3>
             <table>
                 <tr><td>移动</td><td>WASD/摇杆</td></tr>
-                <tr><td>剑</td><td>J键/剑按钮</td></tr>
-                <tr><td>弓</td><td>K键按住瞄准松开射/弓按钮摇杆瞄准</td></tr>
+                <tr><td>剑</td><td>J键/剑按钮（自动锁定）</td></tr>
+                <tr><td>弓</td><td>K键+鼠标瞄准/弓按钮摇杆瞄准</td></tr>
                 <tr><td>药水</td><td>L键/药水按钮</td></tr>
             </table>
         </div>
@@ -337,7 +330,6 @@
     <div id="game-screen">
         <canvas id="game-canvas"></canvas>
 
-        <!-- HUD -->
         <div id="hud">
             <div class="hearts-container" id="hearts-container"></div>
             <div class="hud-info" id="weapon-info">🗡️ 耐久:200 | 🏹 箭:64 | 🧪 药水:1</div>
@@ -346,24 +338,20 @@
 
         <div id="timer">30:00</div>
 
-        <!-- 小地图 -->
         <div id="minimap">
-            <canvas id="minimap-canvas" width="120" height="120"></canvas>
+            <canvas id="minimap-canvas" width="110" height="110"></canvas>
         </div>
 
-        <!-- 摇杆 -->
         <div id="joystick-area">
             <div id="joystick-base">
                 <div id="joystick-stick"></div>
             </div>
         </div>
 
-        <!-- 攻击按钮 -->
         <div class="action-btn" id="attack-btn">剑</div>
         <div class="action-btn" id="bow-btn">弓</div>
         <div class="action-btn" id="potion-btn">药水</div>
 
-        <!-- 弓瞄准摇杆 -->
         <div id="aim-area">
             <div id="aim-base">
                 <div id="aim-stick"></div>
@@ -373,17 +361,15 @@
             </div>
         </div>
 
-        <!-- 死亡 -->
         <div id="death-overlay">
             <p>你死了！</p>
-            <p id="respawn-timer" style="font-size:18px;">5秒后复活...</p>
+            <p id="respawn-timer" style="font-size:16px;">5秒后复活...</p>
         </div>
 
-        <!-- 结算 -->
         <div id="result-screen">
             <h1 id="result-text"></h1>
-            <p id="result-detail" style="font-size:16px;"></p>
-            <button class="btn" onclick="location.reload()" style="margin-top:15px;">返回大厅</button>
+            <p id="result-detail" style="font-size:15px;"></p>
+            <button class="btn" onclick="location.reload()" style="margin-top:12px;">返回大厅</button>
         </div>
     </div>
 
