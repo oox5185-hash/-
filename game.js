@@ -469,7 +469,6 @@ function setupInput(){
 }
 
 function setupActionButtons(){
-    // 关键修改：按钮使用 stopPropagation + preventDefault 防止影响摇杆
     let atk=document.getElementById('attack-btn');
     atk.addEventListener('touchstart',e=>{e.stopPropagation();e.preventDefault();doAttack();},{passive:false});
     atk.addEventListener('mousedown',e=>{e.stopPropagation();e.preventDefault();doAttack();});
@@ -551,9 +550,9 @@ function setupJoystick(){
 
 function doAttack(){
     if(!localPlayer.alive||gameState.phase!=='playing')return;
-    if(localPlayer.swordCooldown>0)return;
 
     if(gameState.myTeam==='steve'){
+        if(localPlayer.swordCooldown>0)return;
         attackSword();
     } else {
         monsterAttack();
@@ -594,12 +593,12 @@ function monsterAttack(){
             break;
         }
         case'skeleton':{
-            // 骷髅：点击攻击后自动蓄力，蓄力完成自动射击
-            if(localPlayer.skeletonCharging) return; // 已经在蓄力中
+            if(localPlayer.skeletonCharging) return;
             if(localPlayer.swordCooldown>0) return;
             localPlayer.skeletonCharging=true;
             localPlayer.skeletonChargeStart=Date.now();
             document.getElementById('skeleton-charge-bar').style.display='block';
+            document.getElementById('skeleton-charge-fill').style.width='0%';
             break;
         }
         case'creeper':{
@@ -611,7 +610,6 @@ function monsterAttack(){
     }
 }
 
-// 骷髅自动射击（在update中检测蓄力完成）
 function skeletonAutoShoot(){
     if(!localPlayer.skeletonCharging) return;
     let elapsed=(Date.now()-localPlayer.skeletonChargeStart)/1000;
@@ -624,14 +622,22 @@ function skeletonAutoShoot(){
         document.getElementById('skeleton-charge-bar').style.display='none';
         document.getElementById('skeleton-charge-fill').style.width='0%';
 
-        // 自动锁定最近Steve
+        // 自动锁定最近Steve，没目标朝面对方向射
         let target=findNearestSteve(CONFIG.SKELETON_RANGE);
-        if(!target) return;
-        let dir=angle(localPlayer.x,localPlayer.y,target.x,target.y);
+        let dirX, dirY;
+        if(target){
+            let dir=angle(localPlayer.x,localPlayer.y,target.x,target.y);
+            dirX=Math.cos(dir);
+            dirY=Math.sin(dir);
+        } else {
+            dirX=Math.cos(localPlayer.facingAngle);
+            dirY=Math.sin(localPlayer.facingAngle);
+        }
+
         let arrow={
             id:gameState.myId+'_'+Date.now(),
             x:localPlayer.x,y:localPlayer.y,
-            dirX:Math.cos(dir),dirY:Math.sin(dir),
+            dirX:dirX,dirY:dirY,
             damage:CONFIG.SKELETON_DAMAGE,
             speed:CONFIG.ARROW_SPEED,
             owner:gameState.myId,ownerTeam:'monster',
@@ -649,7 +655,7 @@ function triggerSlash(a){
     localPlayer.slashAngle=a;
 }
 
-// 弓箭：自动锁定（去掉瞄准虚线）
+// 弓箭：自动锁定
 function startBowCharge(){
     if(!localPlayer.alive||gameState.phase!=='playing')return;
     if(gameState.myTeam!=='steve')return;
@@ -685,7 +691,6 @@ function releaseBow(){
         dirX=Math.cos(dir);
         dirY=Math.sin(dir);
     } else {
-        // 没目标就朝面对方向
         dirX=Math.cos(localPlayer.facingAngle);
         dirY=Math.sin(localPlayer.facingAngle);
     }
@@ -809,6 +814,10 @@ function applyKnockback(fromAngle) {
 }
 
 function handleDeath() {
+    // 取消骷髅蓄力
+    localPlayer.skeletonCharging = false;
+    document.getElementById('skeleton-charge-bar').style.display='none';
+
     if (gameState.myTeam === 'steve') {
         localPlayer.lives--;
         NetworkManager.sendDrop(localPlayer.x, localPlayer.y, {
@@ -966,7 +975,7 @@ function update(dt) {
         if (localPlayer.knockbackTimer <= 0) localPlayer.knockback = false;
     }
 
-    // 正常移动（击退期间不能自主移动）
+    // 正常移动
     if (!localPlayer.knockback) {
         let moveX = 0, moveY = 0;
         if (input.keys['w'] || input.keys['arrowup']) moveY -= 1;
@@ -1264,14 +1273,14 @@ function render() {
             Renderer.drawHitFlash(ctx, sx, sy, viewTileSize, alpha);
         }
 
-        // 击退期间闪烁
+        // 击退闪烁
         if (localPlayer.knockback) {
             ctx.globalAlpha = 0.6 + Math.sin(Date.now() * 0.03) * 0.3;
             Renderer.drawHitFlash(ctx, sx, sy, viewTileSize, 0.15);
             ctx.globalAlpha = 1;
         }
 
-        // 骷髅蓄力时显示锁定指示
+        // 骷髅蓄力锁定指示
         if (localPlayer.skeletonCharging) {
             let target = findNearestSteve(CONFIG.SKELETON_RANGE);
             if (target) {
@@ -1287,6 +1296,7 @@ function render() {
                 ctx.setLineDash([]);
                 // 锁定圈
                 ctx.strokeStyle = 'rgba(255,60,60,0.8)';
+                ctx.lineWidth = 2;
                 ctx.beginPath();
                 ctx.arc(tsx, tsy, viewTileSize * 0.6, 0, Math.PI * 2);
                 ctx.stroke();
